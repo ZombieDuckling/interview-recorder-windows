@@ -3,7 +3,7 @@ using System.Reflection;
 using Recorder.Core.Diagnostics;
 using Recorder.Core.Formats;
 using Recorder.Core.Naming;
-using Recorder.Core.Sessions;
+using Recorder.Core.SessionManagement;
 using Recorder.Core.Settings;
 
 namespace Recorder.Core.Tests;
