@@ -52,8 +52,15 @@ internal sealed class CaptureStream : IDisposable
             CaptureDiagnostics.Write(root, ProcessingLogCode.ChunkClosed, new ProcessingLogValue("file", new SessionRelativePath(chunk.File)), new ProcessingLogValue("frames", chunk.Frames));
             CheckDisk();
         });
+        // Loopback (meeting) delivers no packets while nothing plays, so its silence fill is normal, not a gap (spec section 3).
+        // The mic always delivers packets, so a mic gap is a real one (device change, sleep, stall) and is logged.
         aligner = new StreamClockAligner(writer, 0, frames =>
-            CaptureDiagnostics.Write(root, ProcessingLogCode.CaptureGap, new ProcessingLogValue("stream", (long)role), new ProcessingLogValue("frames", frames)));
+        {
+            if (role == StreamRole.Microphone)
+            {
+                CaptureDiagnostics.Write(root, ProcessingLogCode.CaptureGap, new ProcessingLogValue("stream", (long)role), new ProcessingLogValue("frames", frames));
+            }
+        });
         consumer = Task.Factory.StartNew(Consume, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
