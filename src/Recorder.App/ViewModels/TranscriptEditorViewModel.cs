@@ -4,14 +4,17 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Recorder.Core.Abstractions;
+using Recorder.Core.Formats;
+using Recorder.Core.IO;
 using Recorder.Export;
 using Recorder.Export.Transcript;
+using TranscriptDocument = Recorder.Core.Formats.Transcript;
 
 namespace Recorder.App.ViewModels;
 
 public sealed partial class TranscriptSegmentViewModel : ObservableObject
 {
-    public TranscriptSegmentViewModel(TranscriptSegmentRecord segment)
+    public TranscriptSegmentViewModel(TranscriptSegment segment)
     {
         Id = segment.Id;
         StartSeconds = segment.Start;
@@ -35,7 +38,7 @@ public sealed partial class TranscriptSegmentViewModel : ObservableObject
     [ObservableProperty]
     private string _text;
 
-    public void ApplyTo(TranscriptSegmentRecord segment)
+    public void ApplyTo(TranscriptSegment segment)
     {
         segment.Speaker = Speaker;
         segment.SpeakerVerified = SpeakerVerified;
@@ -47,9 +50,9 @@ public sealed partial class TranscriptEditorViewModel : ObservableObject
 {
     private readonly string _transcriptPath;
     private readonly string _audioPath;
-    private TranscriptFile _document;
+    private TranscriptDocument _document;
 
-    public TranscriptEditorViewModel(string sessionFolder, TranscriptFile document, string audioFileName = "interview_audio.mp4")
+    public TranscriptEditorViewModel(string sessionFolder, TranscriptDocument document, string audioFileName = "interview_audio.mp4")
     {
         SessionFolder = sessionFolder;
         _transcriptPath = Path.Combine(sessionFolder, "transcript.json");
@@ -108,7 +111,8 @@ public sealed partial class TranscriptEditorViewModel : ObservableObject
     private async Task SaveAsync(CancellationToken cancellationToken)
     {
         SyncSegmentsToDocument();
-        await TranscriptJsonIO.SaveAsync(_transcriptPath, _document, cancellationToken).ConfigureAwait(true);
+        _document.UpdatedAt = DateTimeOffset.UtcNow;
+        await TranscriptIO.WriteAsync(_transcriptPath, _document, cancellationToken).ConfigureAwait(true);
     }
 
     [RelayCommand]
@@ -124,12 +128,12 @@ public sealed partial class TranscriptEditorViewModel : ObservableObject
         var duration = TimeSpan.FromSeconds(_document.Segments.Max(s => s.End));
         var request = new DocxExportRequest(
             SessionCode: _document.SessionCode,
-            RecordedAt: DateTimeOffset.Parse(_document.CreatedAt, CultureInfo.InvariantCulture),
+            RecordedAt: _document.CreatedAt,
             Duration: duration,
             StudyCode: exportSettings.StudyCode,
             EngineVersion: _document.Engine.Version,
             ModelName: _document.Engine.Model,
-            Segments: TranscriptJsonIO.ToDocxSegments(_document),
+            Segments: TranscriptMapping.ToDocxSegments(_document),
             OutputPath: outputPath,
             ExportedAt: exportedAt,
             ReviewerInitials: exportSettings.IncludeReview ? exportSettings.ReviewerInitials : null,

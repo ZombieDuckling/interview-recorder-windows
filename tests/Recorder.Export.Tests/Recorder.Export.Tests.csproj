@@ -24,4 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Recorder.Core\Recorder.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\Recorder.Core.Tests\Fixtures\transcript.example.json" Link="Fixtures\transcript.example.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

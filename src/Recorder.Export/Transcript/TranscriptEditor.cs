@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Recorder.Core.Formats;
+using TranscriptDocument = Recorder.Core.Formats.Transcript;
 
 namespace Recorder.Export.Transcript;
 
@@ -7,7 +8,7 @@ public static partial class TranscriptEditor
 {
     private static readonly Regex InitialsPattern = ReviewerInitialsRegex();
 
-    public static void EditSegmentText(TranscriptFile document, int segmentId, string newText, DateTimeOffset atUtc)
+    public static void EditSegmentText(TranscriptDocument document, int segmentId, string newText, DateTimeOffset atUtc)
     {
         var segment = GetSegment(document, segmentId);
         var oldLength = segment.Text.Length;
@@ -19,11 +20,11 @@ public static partial class TranscriptEditor
 
         segment.Text = trimmed;
         segment.Edited = trimmed != segment.OriginalText;
-        AppendHistory(document, segmentId, "text", atUtc, oldLength, trimmed.Length);
+        AppendHistory(document, segmentId, TranscriptHistoryField.Text, atUtc, oldLength, trimmed.Length);
     }
 
     public static void RelabelSpeaker(
-        TranscriptFile document,
+        TranscriptDocument document,
         int segmentId,
         string speaker,
         bool speakerVerified,
@@ -41,20 +42,20 @@ public static partial class TranscriptEditor
 
         segment.Speaker = trimmed;
         segment.SpeakerVerified = speakerVerified;
-        AppendHistory(document, segmentId, "speaker", atUtc, oldSpeaker.Length, trimmed.Length);
+        AppendHistory(document, segmentId, TranscriptHistoryField.Speaker, atUtc, oldSpeaker.Length, trimmed.Length);
         if (speakerVerified != oldVerified)
         {
             AppendHistory(
                 document,
                 segmentId,
-                "speakerVerified",
+                TranscriptHistoryField.SpeakerVerified,
                 atUtc,
                 oldVerified ? 1 : 0,
                 speakerVerified ? 1 : 0);
         }
     }
 
-    public static void SetReview(TranscriptFile document, string reviewerInitials, string? note, DateTimeOffset atUtc)
+    public static void SetReview(TranscriptDocument document, string reviewerInitials, string? note, DateTimeOffset atUtc)
     {
         var initials = reviewerInitials.Trim();
         if (!InitialsPattern.IsMatch(initials))
@@ -70,14 +71,14 @@ public static partial class TranscriptEditor
         document.Review = new TranscriptReview
         {
             ReviewerInitials = initials,
-            At = TranscriptJsonIO.FormatUtc(atUtc),
+            At = atUtc,
             Note = note,
         };
     }
 
-    public static void ClearReview(TranscriptFile document) => document.Review = null;
+    public static void ClearReview(TranscriptDocument document) => document.Review = null;
 
-    private static TranscriptSegmentRecord GetSegment(TranscriptFile document, int segmentId)
+    private static TranscriptSegment GetSegment(Transcript document, int segmentId)
     {
         var segment = document.Segments.FirstOrDefault(s => s.Id == segmentId);
         if (segment is null)
@@ -89,9 +90,9 @@ public static partial class TranscriptEditor
     }
 
     private static void AppendHistory(
-        TranscriptFile document,
+        TranscriptDocument document,
         int segmentId,
-        string field,
+        TranscriptHistoryField field,
         DateTimeOffset atUtc,
         int oldLength,
         int newLength)
@@ -100,7 +101,7 @@ public static partial class TranscriptEditor
         {
             SegmentId = segmentId,
             Field = field,
-            At = TranscriptJsonIO.FormatUtc(atUtc),
+            At = atUtc,
             OldLength = oldLength,
             NewLength = newLength,
         });

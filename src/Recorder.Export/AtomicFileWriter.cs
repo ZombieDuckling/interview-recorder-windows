@@ -29,19 +29,24 @@ internal static class AtomicFileWriter
                 File.Move(tempPath, targetPath);
             }
         }
-        finally
+        catch
         {
-            if (File.Exists(tempPath))
+            TryDelete(tempPath);
+            throw;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
             {
-                try
-                {
-                    File.Delete(tempPath);
-                }
-                catch (IOException)
-                {
-                    // Left for cleanup on next session open (spec section 8).
-                }
+                File.Delete(path);
             }
+        }
+        catch (IOException)
+        {
         }
     }
 }

@@ -4,12 +4,13 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Recorder.Core.Abstractions;
 
+using Recorder.Core.Formats;
+
 namespace Recorder.Export;
 
 public sealed class DocxExporter : IDocxExporter
 {
-    public const string DisclaimerText =
-        "This transcript was produced by automated speech recognition and may contain errors. Check it against the audio recording before you rely on it.";
+    public const string DisclaimerText = TranscriptDisclaimer.Text;
 
     public Task ExportAsync(DocxExportRequest request, CancellationToken cancellationToken)
     {
