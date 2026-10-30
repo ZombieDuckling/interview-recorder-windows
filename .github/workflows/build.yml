@@ -66,9 +66,14 @@ jobs:
       - name: Bundle FFmpeg (LGPL) and model
         shell: pwsh
         run: |
-          if (Test-Path build/fetch-ffmpeg.ps1) { ./build/fetch-ffmpeg.ps1 -Destination publish/app } else { Write-Warning 'build/fetch-ffmpeg.ps1 missing: installer has no FFmpeg' }
-          if (Test-Path build/fetch-model.ps1) { ./build/fetch-model.ps1 -Destination publish/app/models } else { Write-Warning 'build/fetch-model.ps1 missing: installer has no model' }
+          ./build/fetch-ffmpeg.ps1 -Destination third_party/ffmpeg
+          Copy-Item third_party/ffmpeg/bin/ffmpeg.exe publish/app/ffmpeg.exe
+          if (Test-Path third_party/ffmpeg/FFMPEG-LICENSE.txt) { Copy-Item third_party/ffmpeg/FFMPEG-LICENSE.txt publish/app/ }
+          ./build/fetch-model.ps1 -Destination publish/app/models
+          Copy-Item models/manifest.json publish/app/models/manifest.json
           Copy-Item THIRD-PARTY-NOTICES.md publish/app/
+          # The app looks for these exact paths (Composition/AppComposition.cs)
+          foreach ($f in 'publish/app/ffmpeg.exe','publish/app/models/ggml-base-q5_1.bin','publish/app/models/manifest.json') { if (-not (Test-Path $f)) { throw "missing $f" } }
       - name: Runtime guard (no web view DLLs shipped)
         shell: pwsh
         run: |
