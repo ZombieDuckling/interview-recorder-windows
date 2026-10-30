@@ -1,21 +1,24 @@
 name: build
 on:
   push:
-    branches: [main, 'm*/**', 'wt/**']
+    branches: [main, 'wt/**']
+    tags: ['v*']
   pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
   cancel-in-progress: true
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
 jobs:
-  windows:
+  test:
+    # Branch pushes that have an open PR are tested once, by the pull_request event.
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -29,7 +32,7 @@ jobs:
       - name: Build
         run: dotnet build InterviewRecorder.sln -c Release --no-restore
       - name: Unit tests
-        run: dotnet test InterviewRecorder.sln -c Release --no-build --filter "Category!=E2E&Category!=Hardware" --logger "trx" --results-directory TestResults
+        run: dotnet test InterviewRecorder.sln -c Release --no-build --filter "Category!=E2E&Category!=Hardware&Category!=Model" --logger "trx" --results-directory TestResults
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,3 +40,57 @@ jobs:
           name: test-results
           path: TestResults/*.trx
           retention-days: 7
+
+  installer:
+    # Only for main, tags and manual runs (Actions minutes are paid).
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ('${{ github.ref }}' -like 'refs/tags/v*') { '${{ github.ref_name }}'.TrimStart('v') -replace '-.*$','' } else { '1.0.0' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - name: Publish app (self-contained win-x64)
+        run: dotnet publish src/Recorder.App/Recorder.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -o publish/app
+      - name: Bundle FFmpeg (LGPL) and model
+        shell: pwsh
+        run: |
+          if (Test-Path build/fetch-ffmpeg.ps1) { ./build/fetch-ffmpeg.ps1 -Destination publish/app } else { Write-Warning 'build/fetch-ffmpeg.ps1 missing: installer has no FFmpeg' }
+          if (Test-Path build/fetch-model.ps1) { ./build/fetch-model.ps1 -Destination publish/app/models } else { Write-Warning 'build/fetch-model.ps1 missing: installer has no model' }
+          Copy-Item THIRD-PARTY-NOTICES.md publish/app/
+      - name: Runtime guard (no web view DLLs shipped)
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem publish/app -Recurse -Include *WebView2*,EmbeddedBrowserWebView* -ErrorAction SilentlyContinue
+          if ($bad) { $bad | ForEach-Object FullName; throw 'web view binaries found in publish output' }
+      - name: Build MSI (per-user, WiX 5)
+        run: dotnet build packaging/windows/Package/InterviewRecorder.Package.wixproj -c Release -p:ProductVersion=${{ steps.ver.outputs.version }} -p:PublishDir=${{ github.workspace }}\publish\app -o out/msi
+      - name: Build Burn bundle (.exe)
+        run: dotnet build packaging/windows/Bundle/InterviewRecorder.Bundle.wixproj -c Release -p:ProductVersion=${{ steps.ver.outputs.version }} -p:MsiPath=${{ github.workspace }}\out\msi\InterviewRecorder-x64.msi -o out/bundle
+      - name: Sign (only when a certificate is configured)
+        if: env.SIGN_PFX_BASE64 != ''
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+        shell: pwsh
+        run: ./build/sign.ps1 -Files out/bundle/InterviewRecorder-Setup-x64.exe
+      - name: Hashes
+        shell: pwsh
+        run: |
+          Get-ChildItem out/bundle/*.exe, out/msi/*.msi | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } | Tee-Object out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            out/bundle/InterviewRecorder-Setup-x64.exe
+            out/msi/InterviewRecorder-x64.msi
+            out/SHA256SUMS.txt
+          retention-days: 14

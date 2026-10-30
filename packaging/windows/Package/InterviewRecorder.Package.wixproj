@@ -1,0 +1,14 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!-- WiX 5.0.2 (MS-RL). Not WiX 6+: those binaries require the Open Source Maintenance Fee EULA (ADR-0004). -->
+  <PropertyGroup>
+    <OutputName>InterviewRecorder-x64</OutputName>
+    <Platform>x64</Platform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir)</DefineConstants>
+    <!-- Per-user install into %LocalAppData%\Programs: the per-user ICEs below are expected and checked by the install test instead. -->
+    <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,35 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Per-user MSI: no administrator rights (PLAN.md). Installs to %LocalAppData%\Programs\Interview Recorder. -->
+  <Package Name="Interview Recorder" Manufacturer="Interview Recorder" Version="$(var.ProductVersion)"
+           UpgradeCode="{4ACC9E9D-F4C5-49DB-B14C-CD6EC1754B27}" Scope="perUser" Compressed="yes" Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Interview Recorder is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPCONTACT" Value="Interview Recorder" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Interview Recorder" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
+      <Shortcut Id="AppShortcut" Name="Interview Recorder" Description="Record, transcribe and export consented interviews offline"
+                Target="[INSTALLFOLDER]InterviewRecorder.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\InterviewRecorder" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Interview Recorder" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

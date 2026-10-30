@@ -1,0 +1,12 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <!-- WiX Burn bootstrapper (.exe). The chain holds only the per-user MSI, so Burn never asks for elevation. -->
+  <Bundle Name="Interview Recorder" Manufacturer="Interview Recorder" Version="$(var.ProductVersion)"
+          UpgradeCode="{5E7C1FD0-42B8-4226-ADAD-D9D01D5982C5}" DisableModify="yes">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense" LicenseUrl="" ShowVersion="yes" SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(var.MsiPath)" Visible="no" />
+    </Chain>
+  </Bundle>
+</Wix>
