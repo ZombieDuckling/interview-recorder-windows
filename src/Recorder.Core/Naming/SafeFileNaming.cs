@@ -19,10 +19,7 @@ public static class SafeFileNaming
     public static string SanitizeFileName(string input, int maxLength = MaxNameLength)
     {
         ArgumentException.ThrowIfNullOrEmpty(input);
-        if (maxLength <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maxLength));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
 
         if (input.Length > MaxSanitizeInputLength)
         {

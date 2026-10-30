@@ -78,7 +78,7 @@ public static partial class TranscriptEditor
 
     public static void ClearReview(TranscriptDocument document) => document.Review = null;
 
-    private static TranscriptSegment GetSegment(Transcript document, int segmentId)
+    private static TranscriptSegment GetSegment(Recorder.Core.Formats.Transcript document, int segmentId)
     {
         var segment = document.Segments.FirstOrDefault(s => s.Id == segmentId);
         if (segment is null)

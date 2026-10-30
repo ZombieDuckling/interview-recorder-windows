@@ -57,10 +57,29 @@ public sealed class WhisperTranscriber : ITranscriber
                     if (last) break;
                 }
             }
+            // Map to the frozen transcript.json model (spec section 5). SessionId/SessionCode are filled by the caller.
             var segments = stitcher.Build()
-                .Select(s => new TranscriptSegment(s.Index, s.Start, s.End, s.Speaker, s.Text, s.SpeakerVerified))
+                .Select((s, i) => new TranscriptSegment
+                {
+                    Id = i + 1,
+                    Start = Math.Round(s.Start.TotalSeconds, 3),
+                    End = Math.Round(s.End.TotalSeconds, 3),
+                    Speaker = s.Speaker.ToString(),
+                    SpeakerVerified = s.SpeakerVerified,
+                    Source = s.Role == StreamRole.Microphone ? TranscriptSegmentSource.Mic : TranscriptSegmentSource.Meeting,
+                    Text = s.Text,
+                    OriginalText = s.Text,
+                })
                 .ToList();
-            return new Transcript(model.Name, model.Sha256, EngineVersion(), segments);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return new Transcript
+            {
+                Language = request.Language ?? "auto",
+                Engine = new TranscriptEngineInfo { Version = EngineVersion(), Model = model.Name, ModelSha256 = model.Sha256 },
+                CreatedAt = now,
+                UpdatedAt = now,
+                Segments = segments,
+            };
         }
         finally
         {

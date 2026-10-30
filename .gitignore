@@ -28,3 +28,6 @@ secrets*
 .env*
 # Third-party binaries fetched by CI (checksummed in build/)
 third_party/ffmpeg/
+
+# Local agent tool state
+.omc/
