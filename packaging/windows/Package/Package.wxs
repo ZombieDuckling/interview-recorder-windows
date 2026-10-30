@@ -4,6 +4,8 @@
            UpgradeCode="{4ACC9E9D-F4C5-49DB-B14C-CD6EC1754B27}" Scope="perUser" Compressed="yes" Language="1033">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Interview Recorder is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="..\assets\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPCONTACT" Value="Interview Recorder" />
@@ -21,7 +23,7 @@
 
     <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
       <Shortcut Id="AppShortcut" Name="Interview Recorder" Description="Record, transcribe and export consented interviews offline"
-                Target="[INSTALLFOLDER]InterviewRecorder.exe" WorkingDirectory="INSTALLFOLDER" />
+                Target="[INSTALLFOLDER]InterviewRecorder.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
       <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
       <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\InterviewRecorder" Name="Installed" Type="integer" Value="1" KeyPath="yes" />

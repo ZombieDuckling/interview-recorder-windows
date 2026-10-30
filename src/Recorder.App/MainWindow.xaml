@@ -4,6 +4,7 @@
         xmlns:views="clr-namespace:Recorder.App.Views"
         xmlns:nav="clr-namespace:Recorder.App.Navigation"
         Title="Interview Recorder"
+        Icon="/Assets/app.ico"
         Height="720"
         Width="1100"
         MinHeight="600"
