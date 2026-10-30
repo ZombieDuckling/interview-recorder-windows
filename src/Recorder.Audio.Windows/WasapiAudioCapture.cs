@@ -31,7 +31,9 @@ public sealed class WasapiAudioCapture : IAudioCapture
                     devices.Add(new AudioDeviceInfo(device.ID, device.FriendlyName, kind, device.ID == defaultDevice?.ID,
                         format.SampleRate, format.Channels));
                 }
-                catch (System.Runtime.InteropServices.COMException) { /* It was removed during enumeration. */ }
+#pragma warning disable CA1031 // one broken (often virtual) driver must not hide every other device
+                catch (Exception) { /* removed during enumeration, or a driver that cannot report its format: skip it */ }
+#pragma warning restore CA1031
             }
         }
         return devices;
@@ -70,9 +72,9 @@ public sealed class WasapiAudioCapture : IAudioCapture
         catch (System.Runtime.InteropServices.COMException) when (kind == AudioDeviceKind.Capture)
         {
             try { return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console); }
-            catch (System.Runtime.InteropServices.COMException) { return null; }
+            catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException or ArgumentException) { return null; }
         }
-        catch (System.Runtime.InteropServices.COMException) { return null; }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException or ArgumentException) { return null; }
     }
 
     private sealed class WasapiInputFactory : ICaptureInputFactory

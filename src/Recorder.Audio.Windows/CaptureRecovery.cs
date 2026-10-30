@@ -48,7 +48,7 @@ public sealed class CaptureRecovery : ICaptureRecovery
                 var expected = prefix + (i + 1).ToString("D6", CultureInfo.InvariantCulture) + ".wav";
                 if (chunk.File != expected || chunk.Frames is <= 0 or > PcmChunkWriter.ChunkFrames) throw Corrupt(root);
                 if (i < ordered.Length - 1 && chunk.Frames != PcmChunkWriter.ChunkFrames) throw Corrupt(root);
-                var path = Path.Combine(root, chunk.File);
+                var path = SessionPaths.Resolve(root, chunk.File);
                 RejectLink(path);
                 if (!File.Exists(path)) throw Corrupt(root);
                 using var file = File.OpenRead(path);
@@ -58,9 +58,9 @@ public sealed class CaptureRecovery : ICaptureRecovery
                 if (actual != chunk.Sha256 || !manifest.Hashes.TryGetValue(chunk.File, out var hash) || actual != hash)
                     throw Corrupt(root);
             }
-            var files = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.wav").Order(StringComparer.Ordinal).ToArray() : [];
-            var tracked = ordered.Select(c => Path.Combine(root, c.File)).ToHashSet(StringComparer.Ordinal);
-            if (manifest.Hashes.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal) && !tracked.Contains(Path.Combine(root, key))))
+            var files = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.wav").Select(Path.GetFullPath).Order(StringComparer.Ordinal).ToArray() : [];
+            var tracked = ordered.Select(c => SessionPaths.Resolve(root, c.File)).ToHashSet(SessionPaths.Comparer);
+            if (manifest.Hashes.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal) && !tracked.Contains(SessionPaths.Resolve(root, key))))
                 throw Corrupt(root);
             var tails = files.Where(p => !tracked.Contains(p)).ToArray();
             if (tails.Length > 1) throw Corrupt(root);
@@ -110,7 +110,7 @@ public sealed class CaptureRecovery : ICaptureRecovery
         }
         var streams = plans.Where(p => p.Stream.Chunks.Count > 0).Select(p => new StreamFiles(
             p.Stream.Kind == StreamJsonKind.Meeting ? StreamRole.Meeting : StreamRole.Microphone,
-            p.Folder, p.Stream.Chunks.OrderBy(c => c.File, StringComparer.Ordinal).Select(c => Path.Combine(root, c.File)).ToArray(),
+            p.Folder, p.Stream.Chunks.OrderBy(c => c.File, StringComparer.Ordinal).Select(c => SessionPaths.Resolve(root, c.File)).ToArray(),
             48000, 1, TimeSpan.FromSeconds(p.Stream.Chunks.Sum(c => (long)c.Frames) / 48000d),
             TimeSpan.FromSeconds(p.Stream.FirstFrameOffset / 48000d), p.Stream.Source == StreamCaptureSource.WasapiProcessLoopback)).ToArray();
         if (streams.Length == 0) return null;

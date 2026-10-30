@@ -515,30 +515,10 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
         _ => "The Word file could not be written. If it is open in Word, close it and press Retry.",
     };
 
-    private static IEnumerable<StreamFiles> StreamsFromManifest(string dir, SessionManifest manifest)
-    {
-        foreach (SessionStreamInfo s in manifest.Streams)
-        {
-            if (s.Chunks.Count == 0)
-            {
-                continue;
-            }
-
-            string folder = s.Kind == StreamJsonKind.Mic ? "mic" : "meeting";
-            var chunks = s.Chunks.Select(c => Path.Combine(dir, "capture", folder, c.File)).Where(File.Exists).ToList();
-            long frames = s.Chunks.Sum(c => (long)c.Frames);
-            int rate = s.SampleRate > 0 ? s.SampleRate : 48000;
-            yield return new StreamFiles(
-                s.Kind == StreamJsonKind.Mic ? StreamRole.Microphone : StreamRole.Meeting,
-                Path.Combine(dir, "capture", folder),
-                chunks,
-                rate,
-                s.Channels > 0 ? s.Channels : 1,
-                TimeSpan.FromSeconds((double)frames / rate),
-                TimeSpan.FromSeconds((double)s.FirstFrameOffset / rate),
-                s.Source == StreamCaptureSource.WasapiProcessLoopback);
-        }
-    }
+    private static IEnumerable<StreamFiles> StreamsFromManifest(string dir, SessionManifest manifest) =>
+        CaptureStreams.FromManifest(dir, manifest)
+            .Select(st => st with { ChunkPaths = st.ChunkPaths.Where(File.Exists).ToList() })
+            .Where(st => st.ChunkPaths.Count > 0);
 
     private static void SetOutput(SessionManifest manifest, string file, string sha256, DateTimeOffset at, double? duration, Action<SessionOutputs, SessionOutputFile> assign)
     {

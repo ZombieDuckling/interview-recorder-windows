@@ -83,7 +83,7 @@ internal sealed class CaptureStream : IDisposable
         queue.CompleteAdding();
         await consumer.ConfigureAwait(false);
         return new StreamFiles(role, Path.Combine(root, "capture", StreamRoleMapping.ToJsonKind(role)),
-            writer.Chunks.Select(c => Path.Combine(root, c.File)).ToArray(), 48000, 1,
+            writer.Chunks.Select(c => SessionPaths.Resolve(root, c.File)).ToArray(), 48000, 1,
             TimeSpan.FromSeconds(writer.Chunks.Sum(c => c.Frames) / 48000d), TimeSpan.Zero, processLoopback);
     }
 
@@ -108,7 +108,7 @@ internal sealed class CaptureStream : IDisposable
                     lastDisk = now;
                 }
                 // A 250 ms watermark leaves room for native delivery jitter. Packet QPCs still set placement.
-                if (queue.Count == 0 && Interlocked.Read(ref stopFrame) < 0) aligner.AdvanceTo(Math.Max(0, now - 12000));
+                if (queue.Count == 0 && Interlocked.Read(ref stopFrame) < 0) aligner.AdvanceTo(Math.Max(0, now - 48000));
                 var lost = Interlocked.Exchange(ref lostFrames, 0);
                 if (lost != 0)
                 {

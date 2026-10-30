@@ -32,7 +32,7 @@ internal sealed class AudioCaptureSession : ICaptureSession
         this.factory = factory;
         this.processSupported = processSupported;
         manifest = new CaptureManifest(request.WorkingDirectory);
-        this.freeBytes = freeBytes ?? (() => new DriveInfo(Path.GetPathRoot(Path.GetFullPath(request.WorkingDirectory))!).AvailableFreeSpace);
+        this.freeBytes = freeBytes ?? (() => SafeFreeBytes(request.WorkingDirectory));
     }
 
     public event EventHandler<LevelSample>? LevelsAvailable;
@@ -154,13 +154,20 @@ internal sealed class AudioCaptureSession : ICaptureSession
         var firstFrame = !timestampError && qpc > 0 ? clock.FromQpc(qpc) : now - frames * 48000L / format.SampleRate;
         if (firstFrame > now + 4800 || firstFrame < now - 480000)
             firstFrame = now - frames * 48000L / format.SampleRate;
-        if (input.Converter is null || discontinuity || (input.ExpectedDeviceFrame >= 0 && deviceFrame != input.ExpectedDeviceFrame))
+        // Place packets contiguously: each continues where the previous ended. Per-packet QPC is only accurate to ~0.1-1 ms
+        // (worse on Bluetooth), so re-placing every packet from it would splice silence in or drop samples 20-100 times a second.
+        // Re-anchor from QPC only at the start, on a discontinuity, or when QPC and the running position disagree by > 100 ms
+        // (a real gap, or slow device-clock drift: one 100 ms correction every ~30 min at 50 ppm).
+        bool reanchor = input.Converter is null || discontinuity || Math.Abs(firstFrame - input.OutputEnd) > 4800;
+        if (reanchor)
         {
             Flush(lane, input);
             input.Converter = new PcmFrameConverter(format);
+            input.OutputEnd = firstFrame;
         }
-        var converter = input.Converter;
-        var outputStart = firstFrame - converter.InputFrames * 48000 / format.SampleRate + converter.OutputFrames;
+
+        var converter = input.Converter!;
+        var outputStart = input.OutputEnd;
         // A native packet is at most the requested buffer, but split defensively before conversion/allocation.
         var maxBytes = Math.Max(1, format.SampleRate / 10) * format.BlockAlign;
         for (var offset = 0; offset < data.Length; offset += maxBytes)
@@ -357,5 +364,19 @@ internal sealed class AudioCaptureSession : ICaptureSession
         internal long OutputEnd;
         internal int Detaching;
         internal Exception? StartError;
+    }
+
+    /// <summary>Free space of the drive holding the session; long.MaxValue (unknown: skip the check) for UNC or redirected
+    /// paths where DriveInfo throws, so a disk check can never be what stops an interview.</summary>
+    private static long SafeFreeBytes(string directory)
+    {
+        try
+        {
+            return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(directory))!).AvailableFreeSpace;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return long.MaxValue;
+        }
     }
 }

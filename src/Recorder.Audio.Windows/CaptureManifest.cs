@@ -73,15 +73,36 @@ internal sealed class CaptureManifest(string directory)
     {
         lock (gate)
         {
-            var manifest = Read();
-            update(manifest);
-            Save(manifest);
+            // Windows Defender, the search indexer or a sync client briefly hold freshly written files.
+            // One sharing violation must not stop an interview: retry for up to ~2 s (inside the ~4 s capture queue).
+            WithRetry(() =>
+            {
+                var manifest = Read();
+                update(manifest);
+                AtomicFileWrite.WriteAllText(path, FormatJson.SerializeSession(manifest));
+            });
         }
     }
 
     internal void Save(SessionManifest manifest)
     {
-        lock (gate) AtomicFileWrite.WriteAllText(path, FormatJson.SerializeSession(manifest));
+        lock (gate) WithRetry(() => AtomicFileWrite.WriteAllText(path, FormatJson.SerializeSession(manifest)));
+    }
+
+    private static void WithRetry(Action action)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                action();
+                return;
+            }
+            catch (Exception ex) when (attempt < 12 && (ex is IOException or UnauthorizedAccessException))
+            {
+                Thread.Sleep(Math.Min(50 * attempt, 250));
+            }
+        }
     }
 
     internal static StreamJsonKind ToKind(StreamRole role) => role == StreamRole.Meeting ? StreamJsonKind.Meeting : StreamJsonKind.Mic;
