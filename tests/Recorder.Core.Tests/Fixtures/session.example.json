@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1.0.0",
+  "sessionId": "7f3a9c1e-2b4d-4e6f-8a1b-3c5d7e9f0a2b",
+  "sessionCode": "IR-20261031-091500-7F3A",
+  "participantId": "P-014",
+  "studyCode": "HEALTH-2026",
+  "consent": { "confirmed": true, "confirmedAt": "2026-10-31T07:14:58.412Z" },
+  "createdAt": "2026-10-31T07:14:58.400Z",
+  "state": "Exported",
+  "stateHistory": [
+    { "state": "Recording", "at": "2026-10-31T07:15:00.010Z" },
+    { "state": "Finalizing", "at": "2026-10-31T08:02:11.500Z" },
+    { "state": "ReadyToTranscribe", "at": "2026-10-31T08:02:40.020Z" },
+    { "state": "Transcribing", "at": "2026-10-31T08:02:41.000Z" },
+    { "state": "Exported", "at": "2026-10-31T08:21:03.300Z" }
+  ],
+  "error": null,
+  "app": { "name": "Interview Recorder", "version": "1.0.0", "platform": "macos", "osVersion": "26.6.2", "arch": "arm64" },
+  "recording": { "startedAt": "2026-10-31T07:15:00.010Z", "stoppedAt": "2026-10-31T08:02:11.500Z", "durationSeconds": 2831.49, "recovered": false },
+  "streams": [
+    {
+      "kind": "meeting", "source": "screencapturekit", "deviceType": "system",
+      "sampleRate": 48000, "channels": 1, "bitsPerSample": 16, "chunkFrames": 480000, "firstFrameOffset": 0,
+      "chunks": [ { "file": "capture/meeting/000001.wav", "frames": 480000, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } ]
+    },
+    {
+      "kind": "mic", "source": "avaudioengine", "deviceType": "builtin",
+      "sampleRate": 48000, "channels": 1, "bitsPerSample": 16, "chunkFrames": 480000, "firstFrameOffset": 960,
+      "chunks": [ { "file": "capture/mic/000001.wav", "frames": 480000, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } ]
+    }
+  ],
+  "transcription": {
+    "engine": "whisper.cpp", "engineVersion": "1.8.2", "model": "ggml-base-q5_1", "modelSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "language": "en", "threads": 4, "startedAt": "2026-10-31T08:02:41.000Z", "completedAt": "2026-10-31T08:21:03.000Z", "peakMemoryMB": 412.5
+  },
+  "outputs": {
+    "audio": { "file": "interview_audio.mp4", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "writtenAt": "2026-10-31T08:02:40.000Z", "durationSeconds": 2831.49 },
+    "transcriptJson": { "file": "transcript.json", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "writtenAt": "2026-10-31T08:21:03.100Z" },
+    "docx": { "file": "interview_transcript.docx", "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "writtenAt": "2026-10-31T08:21:03.200Z" }
+  },
+  "hashes": {
+    "capture/meeting/000001.wav": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capture/mic/000001.wav": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "interview_audio.mp4": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "integrity": null,
+  "retention": { "deleteAfterDays": 365, "dueAt": "2027-10-31T07:14:58.400Z" },
+  "audit": [
+    { "event": "created", "at": "2026-10-31T07:14:58.400Z" },
+    { "event": "recording_started", "at": "2026-10-31T07:15:00.010Z" },
+    { "event": "recording_stopped", "at": "2026-10-31T08:02:11.500Z" },
+    { "event": "transcribed", "at": "2026-10-31T08:21:03.000Z" },
+    { "event": "exported", "at": "2026-10-31T08:21:03.200Z" }
+  ]
+}
