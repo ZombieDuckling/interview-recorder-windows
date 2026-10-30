@@ -1,0 +1,55 @@
+<UserControl x:Class="Recorder.App.Views.PrivacySettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24" MaxWidth="720">
+      <TextBlock Text="Privacy and retention" Style="{StaticResource TitleTextStyle}"/>
+      <TextBlock Margin="0,8,0,16" Text="Control where data lives, how long it is kept, and transcription resource use."/>
+      <TextBlock Text="Data root" FontWeight="SemiBold"/>
+      <Grid Margin="0,4,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBox AutomationProperties.AutomationId="PrivacyDataRoot"
+                 AutomationProperties.Name="Data root"
+                 Text="{Binding DataRoot, UpdateSourceTrigger=PropertyChanged}"/>
+        <Button Grid.Column="1"
+                Margin="8,0,0,0"
+                Content="_Browse…"
+                Command="{Binding BrowseDataRootCommand}"/>
+      </Grid>
+      <TextBlock Margin="0,8,0,0"
+                 Foreground="{DynamicResource DangerBrush}"
+                 Text="{Binding SyncFolderWarning}"
+                 Visibility="{Binding SyncFolderWarning, Converter={StaticResource StringNotEmptyVisibility}}"/>
+      <TextBlock Margin="0,16,0,0" Text="Retention (days)" FontWeight="SemiBold"/>
+      <TextBox Margin="0,4,0,0"
+               AutomationProperties.AutomationId="PrivacyRetentionDays"
+               AutomationProperties.Name="Retention days"
+               Text="{Binding RetentionDays, UpdateSourceTrigger=PropertyChanged}"/>
+      <TextBlock Margin="0,16,0,0" Text="Transcription threads" FontWeight="SemiBold"/>
+      <TextBox Margin="0,4,0,0"
+               AutomationProperties.AutomationId="PrivacyThreadCap"
+               AutomationProperties.Name="Transcription thread cap"
+               Text="{Binding MaxThreads, UpdateSourceTrigger=PropertyChanged}"/>
+      <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
+        <Button Margin="0,0,8,0"
+                Content="_Fast preset"
+                Command="{Binding ApplyFastPresetCommand}"/>
+        <Button Content="_Balanced preset"
+                Command="{Binding ApplyBalancedPresetCommand}"/>
+      </StackPanel>
+      <TextBlock Margin="0,16,0,0" Text="Encryption" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,4,0,0" Text="{Binding EncryptionStatus}"/>
+      <Button Margin="0,16,0,0"
+              HorizontalAlignment="Left"
+              Style="{StaticResource PrimaryButtonStyle}"
+              AutomationProperties.AutomationId="PrivacySave"
+              AutomationProperties.Name="Save privacy settings"
+              Content="_Save settings"
+              Command="{Binding SaveCommand}"/>
+      <TextBlock Margin="0,12,0,0" Style="{StaticResource StatusTextStyle}" Text="{Binding StatusMessage}"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

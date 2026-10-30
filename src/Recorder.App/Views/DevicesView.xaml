@@ -1,0 +1,36 @@
+<UserControl x:Class="Recorder.App.Views.DevicesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24">
+      <TextBlock Text="Permission and device diagnostics" Style="{StaticResource TitleTextStyle}"/>
+      <Button Margin="0,12,0,16"
+              HorizontalAlignment="Left"
+              AutomationProperties.AutomationId="DevicesRefresh"
+              AutomationProperties.Name="Refresh device list"
+              Content="_Refresh"
+              Command="{Binding RefreshCommand}"/>
+      <TextBlock Text="Playback (meeting audio)" FontWeight="SemiBold"/>
+      <ListBox Margin="0,4,0,16"
+               MinHeight="120"
+               AutomationProperties.AutomationId="DevicesRenderList"
+               AutomationProperties.Name="Playback devices"
+               ItemsSource="{Binding RenderDevices}"
+               DisplayMemberPath="DisplayName"/>
+      <TextBlock Text="Microphones" FontWeight="SemiBold"/>
+      <ListBox Margin="0,4,0,16"
+               MinHeight="120"
+               AutomationProperties.AutomationId="DevicesCaptureList"
+               AutomationProperties.Name="Capture devices"
+               ItemsSource="{Binding CaptureDevices}"
+               DisplayMemberPath="DisplayName"/>
+      <TextBlock Text="Loopback" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,4,0,12" Text="{Binding ProcessLoopbackText}"/>
+      <TextBlock Text="Storage" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,4,0,12" Style="{StaticResource StatusTextStyle}" Text="{Binding FreeDiskText}"/>
+      <TextBlock Text="Transcription model" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,4,0,12" Text="{Binding ModelText}"/>
+      <TextBlock Style="{StaticResource StatusTextStyle}" Text="{Binding StatusMessage}"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

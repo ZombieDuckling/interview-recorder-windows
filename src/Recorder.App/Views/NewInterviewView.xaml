@@ -1,0 +1,50 @@
+<UserControl x:Class="Recorder.App.Views.NewInterviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24" MaxWidth="720">
+      <TextBlock Text="New interview" Style="{StaticResource TitleTextStyle}"/>
+      <TextBlock Margin="0,8,0,16" Text="Enter a pseudonymous participant ID, optional study code, choose devices, confirm consent, then start recording."/>
+      <TextBlock Text="Participant ID (required)" FontWeight="SemiBold"/>
+      <TextBox Margin="0,4,0,0"
+               AutomationProperties.AutomationId="NewInterviewParticipantId"
+               AutomationProperties.Name="Participant ID"
+               Text="{Binding ParticipantId, UpdateSourceTrigger=PropertyChanged}"/>
+      <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource DangerBrush}" Text="{Binding ParticipantIdError}"/>
+      <TextBlock Margin="0,16,0,0" Text="Study code (optional)" FontWeight="SemiBold"/>
+      <TextBox Margin="0,4,0,0"
+               AutomationProperties.AutomationId="NewInterviewStudyCode"
+               AutomationProperties.Name="Study code"
+               Text="{Binding StudyCode, UpdateSourceTrigger=PropertyChanged}"/>
+      <TextBlock Margin="0,16,0,0" Text="Meeting output device" FontWeight="SemiBold"/>
+      <ComboBox Margin="0,4,0,0"
+                AutomationProperties.AutomationId="NewInterviewMeetingDevice"
+                AutomationProperties.Name="Meeting output device"
+                ItemsSource="{Binding RenderDevices}"
+                DisplayMemberPath="DisplayName"
+                SelectedItem="{Binding SelectedMeetingDevice}"/>
+      <TextBlock Margin="0,16,0,0" Text="Microphone" FontWeight="SemiBold"/>
+      <ComboBox Margin="0,4,0,0"
+                AutomationProperties.AutomationId="NewInterviewMicrophone"
+                AutomationProperties.Name="Microphone"
+                ItemsSource="{Binding CaptureDevices}"
+                DisplayMemberPath="DisplayName"
+                SelectedItem="{Binding SelectedMicrophone}"/>
+      <TextBlock Margin="0,16,0,0" Text="{Binding ScopeNotice}"/>
+      <CheckBox Margin="0,16,0,0"
+                AutomationProperties.AutomationId="NewInterviewConsent"
+                AutomationProperties.Name="Consent confirmed"
+                Content="I confirm the participant has consented to this recording for the study."
+                IsChecked="{Binding ConsentConfirmed}"/>
+      <Button Margin="0,16,0,0"
+              HorizontalAlignment="Left"
+              Style="{StaticResource PrimaryButtonStyle}"
+              AutomationProperties.AutomationId="NewInterviewStart"
+              AutomationProperties.Name="Start recording"
+              Content="_Start recording"
+              IsEnabled="{Binding CanStart}"
+              Command="{Binding DataContext.StartInterviewCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+      <TextBlock Margin="0,12,0,0" Style="{StaticResource StatusTextStyle}" Text="{Binding StatusMessage}"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

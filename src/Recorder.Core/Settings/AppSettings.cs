@@ -18,6 +18,9 @@ public sealed class AppSettings
 
     [JsonPropertyOrder(3)]
     public TranscriptionPreset Preset { get; set; } = TranscriptionPreset.Balanced;
+
+    [JsonPropertyOrder(4)]
+    public bool FirstRunCompleted { get; set; }
 }
 
 public static class AppSettingsPaths
@@ -92,28 +95,59 @@ public static class AppSettingsStore
         IndentSize = 2,
     };
 
-    public static AppSettings LoadOrDefault()
+    public static AppSettingsLoadResult LoadOrDefault()
     {
         var path = AppSettingsPaths.SettingsFilePath;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (!File.Exists(path))
         {
-            return new AppSettings();
+            return new AppSettingsLoadResult(new AppSettings(), CorruptSettingsMessage: null);
         }
 
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            return new AppSettingsLoadResult(settings, CorruptSettingsMessage: null);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            return new AppSettings();
+            var backup = path + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+            try
+            {
+                File.Move(path, backup, overwrite: false);
+            }
+            catch (IOException)
+            {
+            }
+
+            var message =
+                "Your settings file could not be read and was renamed so it is not lost. "
+                + "Choose your data folder again in Welcome or Privacy settings.";
+            return new AppSettingsLoadResult(new AppSettings(), message);
         }
     }
 
     public static async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
+        Validate(settings);
+        Directory.CreateDirectory(Path.GetDirectoryName(AppSettingsPaths.SettingsFilePath)!);
         var json = JsonSerializer.Serialize(settings, JsonOptions);
         await AtomicFileWrite.WriteAllTextAsync(AppSettingsPaths.SettingsFilePath, json, cancellationToken).ConfigureAwait(false);
     }
+
+    private static void Validate(AppSettings settings)
+    {
+        if (settings.RetentionDays is < 1 or > 3650)
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Retention must be between 1 and 3650 days.");
+        }
+
+        if (settings.ThreadCap is < 1 or > 32)
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Thread cap must be between 1 and 32.");
+        }
+    }
 }
+
+public sealed record AppSettingsLoadResult(AppSettings Settings, string? CorruptSettingsMessage);

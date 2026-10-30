@@ -1,9 +1,19 @@
 ﻿<Application x:Class="Recorder.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Recorder.App"
-             StartupUri="MainWindow.xaml">
-    <Application.Resources>
-         
-    </Application.Resources>
+             xmlns:conv="clr-namespace:Recorder.App.Converters"
+             Startup="App_OnStartup"
+             Exit="App_OnExit">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/AppTheme.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+      <conv:BoolToVisibilityConverter x:Key="BoolVisibility"/>
+      <conv:NullToVisibilityConverter x:Key="NullToVisibility"/>
+      <conv:StringNotEmptyToVisibilityConverter x:Key="StringNotEmptyVisibility"/>
+      <conv:EnumMatchToVisibilityConverter x:Key="PageVisibility"/>
+      <conv:TimeSpanToClockConverter x:Key="ClockConverter"/>
+    </ResourceDictionary>
+  </Application.Resources>
 </Application>
