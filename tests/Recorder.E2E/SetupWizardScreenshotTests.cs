@@ -30,7 +30,9 @@ public sealed class SetupWizardScreenshotTests
             Window? window = null;
             for (int i = 0; i < 60 && window is null; i++)
             {
-                window = app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Title.Contains("Interview Recorder", StringComparison.Ordinal));
+                // Burn relaunches itself as a separate (clean-room) process, so search the whole desktop, not the launched process.
+                window = automation.GetDesktop().FindAllChildren()
+                    .FirstOrDefault(w => (w.Name ?? string.Empty).Contains("Interview Recorder", StringComparison.Ordinal))?.AsWindow();
                 if (window is null) Thread.Sleep(500);
             }
 
@@ -50,9 +52,12 @@ public sealed class SetupWizardScreenshotTests
         }
         finally
         {
-            app.Close();
-            Thread.Sleep(1000);
-            if (!app.HasExited) app.Kill();
+            // Close every setup process (the launcher and its relaunched child); nothing was installed.
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName(Path.GetFileNameWithoutExtension(SetupExe)))
+            {
+                try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { }
+                p.Dispose();
+            }
         }
     }
 }
