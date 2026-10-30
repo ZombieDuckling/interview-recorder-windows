@@ -8,6 +8,7 @@ internal static class SpeechRegions
     private const int MinSpeechFrames = 8;         // 0.24 s
     private const int MergeGapFrames = 25;         // 0.75 s
     private const int PadFrames = 8;               // 0.24 s each side
+    private const int MinRegionSamples = PcmWindowReader.SampleRate * 4; // whisper misses very short clips: give at least 4 s of context
 
     public static IReadOnlyList<(long Start, long End)> Find(PcmWindowReader reader, CancellationToken cancellationToken)
     {
@@ -48,6 +49,12 @@ internal static class SpeechRegions
         if (lastFrame - firstFrame + 1 < MinSpeechFrames) return;
         long start = Math.Max(0, (firstFrame - PadFrames) * FrameSamples);
         long end = Math.Min(totalSamples, (lastFrame + 1 + PadFrames) * FrameSamples);
+        if (end - start < MinRegionSamples)
+        {
+            long grow = (MinRegionSamples - (end - start)) / 2;
+            start = Math.Max(0, start - grow);
+            end = Math.Min(totalSamples, Math.Max(end + grow, start + MinRegionSamples));
+        }
         if (regions.Count > 0 && start <= regions[^1].End)
         {
             regions[^1] = (regions[^1].Start, Math.Max(end, regions[^1].End));

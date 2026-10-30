@@ -13,7 +13,7 @@ namespace Recorder.Transcription;
 public sealed class ModelUnavailableException(string message) : Exception(message);
 
 /// <summary>whisper.cpp (Whisper.net) over 16 kHz WAV files, in bounded overlapping windows read from disk.</summary>
-public sealed class WhisperTranscriber : ITranscriber
+public sealed partial class WhisperTranscriber : ITranscriber
 {
     internal const double WindowSeconds = 30;
     internal const double OverlapSeconds = 2;
@@ -116,7 +116,12 @@ public sealed class WhisperTranscriber : ITranscriber
             {
                 var found = new List<WindowSegment>();
                 await foreach (SegmentData segment in processor.ProcessAsync(samples, cancellationToken).ConfigureAwait(false))
-                    found.Add(new WindowSegment(segment.Start.TotalSeconds, segment.End.TotalSeconds, segment.Text));
+                {
+                    // whisper emits non-speech markers such as [BLANK_AUDIO], (silence), [MUSIC]: never put them in a transcript
+                    string text = segment.Text.Trim();
+                    if (text.Length == 0 || NonSpeechMarker().IsMatch(text)) continue;
+                    found.Add(new WindowSegment(segment.Start.TotalSeconds, segment.End.TotalSeconds, text));
+                }
                 return found;
             }
             catch (Exception) when (attempt < Attempts && !cancellationToken.IsCancellationRequested)
@@ -161,4 +166,7 @@ public sealed class WhisperTranscriber : ITranscriber
             ?? typeof(WhisperFactory).Assembly.GetName().Version?.ToString() ?? "unknown";
         return "whisper.cpp/Whisper.net " + version.Split('+')[0];
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(\[[^\]]*\]|\([^)]*\)|\*[^*]*\*)(\s*(\[[^\]]*\]|\([^)]*\)|\*[^*]*\*))*$")]
+    private static partial System.Text.RegularExpressions.Regex NonSpeechMarker();
 }

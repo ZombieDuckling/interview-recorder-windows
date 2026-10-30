@@ -32,6 +32,7 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
 
     private ICaptureSession? _captureSession;
     private string? _activeDirectory;
+    private string? _recordingDirectory;
     private ProcessingLogWriter? _log;
     private CancellationTokenSource? _operationCts;
     private Timer? _tick;
@@ -136,13 +137,26 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
             await machine.TransitionToAsync(SessionState.Recording, now, cancellationToken).ConfigureAwait(false);
 
             // From here until Stop, only the capture writes session.json (streams, chunks, startedAt).
-            ICaptureSession session = await _capture.StartAsync(
-                new CaptureRequest(dir, request.MeetingEndpointId, request.MicrophoneEndpointId),
-                cancellationToken).ConfigureAwait(false);
+            ICaptureSession session;
+            try
+            {
+                session = await _capture.StartAsync(
+                    new CaptureRequest(dir, request.MeetingEndpointId, request.MicrophoneEndpointId),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.Error(ProcessingLogCode.CaptureError);
+                await MarkFailedAsync(dir, SessionErrorStage.Recording, "START_FAILED").ConfigureAwait(false);
+                SetStatus("Recording could not start: no audio was captured. Check the microphone and playback device, then try again.", 0, busy: false, cancel: false, retry: false, error: "START_FAILED");
+                throw new InvalidOperationException("Recording could not start. Check that the microphone and the meeting playback device are connected and allowed, then try again.", ex);
+            }
+
             session.LevelsAvailable += OnLevels;
             session.FaultRaised += OnFault;
             _captureSession = session;
             _activeDirectory = dir;
+            _recordingDirectory = dir;
             _log.Info(ProcessingLogCode.CaptureStarted);
             _tick = new Timer(_ => Changed?.Invoke(this, EventArgs.Empty), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
             ActiveSession = new SessionListItem(code, dir, SessionState.Recording, startLocal, null, false, false);
@@ -163,11 +177,18 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
         try
         {
             ICaptureSession session = _captureSession ?? throw new InvalidOperationException("No recording is running.");
-            dir = _activeDirectory!;
+            dir = _recordingDirectory!;
             SetStatus("Stopping and saving the recording…", 0, busy: true, cancel: false, retry: false, error: null);
             try
             {
                 result = await session.StopAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log(dir).Error(ProcessingLogCode.CaptureError);
+                await MarkFailedAsync(dir, SessionErrorStage.Recording, "STOP_FAILED").ConfigureAwait(false);
+                SetStatus("The recording stopped with an error. The saved part is kept: open the session and press Retry to recover it.", 0, busy: false, cancel: false, retry: true, error: "STOP_FAILED");
+                return;
             }
             finally
             {
@@ -175,6 +196,7 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
                 session.FaultRaised -= OnFault;
                 await session.DisposeAsync().ConfigureAwait(false);
                 _captureSession = null;
+                _recordingDirectory = null;
                 _tick?.Dispose();
                 _tick = null;
             }
@@ -207,6 +229,12 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
             {
                 // spec: "transcribe again" moves the old transcript to exports/
                 MoveToExports(sessionDirectory, TranscriptFile);
+                MoveToExports(sessionDirectory, DocxFile);
+                if (manifest.Outputs is not null)
+                {
+                    manifest.Outputs.TranscriptJson = null;
+                    manifest.Outputs.Docx = null;
+                }
             }
 
             await machine.TransitionToAsync(SessionState.Transcribing, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
@@ -405,15 +433,21 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
             SessionManifest manifest = SessionManifestIO.Read(path);
             if (manifest.State == SessionState.Transcribing)
             {
+                if (manifest.Outputs is { } outputs)
+                {
+                    if (outputs.TranscriptJson is { } t && !File.Exists(Path.Combine(dir, t.File))) outputs.TranscriptJson = null;
+                    if (outputs.Docx is { } d && !File.Exists(Path.Combine(dir, d.File))) outputs.Docx = null;
+                }
+
                 await new SessionStateMachine(manifest, path).TransitionToAsync(SessionState.ReadyToTranscribe, DateTimeOffset.UtcNow, CancellationToken.None).ConfigureAwait(false);
             }
 
             Log(dir).Info(ProcessingLogCode.TranscribeCancelled);
             SetStatus("Transcription cancelled. The recording is safe; you can start it again.", 0, busy: false, cancel: false, retry: true, error: null);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException
-                                       or System.ComponentModel.Win32Exception or OperationCanceledException or FormatException
-                                       or System.Text.Json.JsonException or SessionTransitionRefusedException)
+#pragma warning disable CA1031 // any failure must end in Failed + a plain-language status, never a stuck "busy" UI
+        catch (Exception ex)
+#pragma warning restore CA1031
         {
             Log(dir).Error(stage switch
             {
@@ -421,21 +455,34 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
                 SessionErrorStage.Transcribing => ProcessingLogCode.TranscribeError,
                 _ => ProcessingLogCode.ExportError,
             });
+            await MarkFailedAsync(dir, stage, code).ConfigureAwait(false);
+            SetStatus(PlainLanguage(stage, ex), 0, busy: false, cancel: false, retry: true, error: code);
+        }
+        finally
+        {
+            _operationCts = null;
+        }
+    }
+
+    /// <summary>Best effort: record Failed with stage/code. Never throws, so the original error is what the researcher sees.</summary>
+    private static async Task MarkFailedAsync(string dir, SessionErrorStage stage, string code)
+    {
+        try
+        {
             string path = Path.Combine(dir, ManifestFile);
             SessionManifest manifest = SessionManifestIO.Read(path);
-            if (manifest.State != SessionState.Exported && manifest.State != SessionState.Failed)
+            if (manifest.State is not (SessionState.Exported or SessionState.Failed))
             {
                 await new SessionStateMachine(manifest, path).TransitionToAsync(
                     SessionState.Failed, DateTimeOffset.UtcNow,
                     new SessionErrorInfo { Stage = stage, Code = code, At = DateTimeOffset.UtcNow },
                     CancellationToken.None).ConfigureAwait(false);
             }
-
-            SetStatus(PlainLanguage(stage, ex), 0, busy: false, cancel: false, retry: true, error: code);
         }
-        finally
+#pragma warning disable CA1031 // the session file itself may be the problem; status already tells the researcher
+        catch (Exception)
+#pragma warning restore CA1031
         {
-            _operationCts = null;
         }
     }
 
@@ -536,9 +583,9 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
 
     private void OnFault(object? sender, CaptureFault fault)
     {
-        if (_activeDirectory is not null)
+        if (_recordingDirectory is not null)
         {
-            Log(_activeDirectory).Warn(fault.Kind is CaptureFaultKind.DiskLow or CaptureFaultKind.DiskFull ? ProcessingLogCode.DiskLow
+            Log(_recordingDirectory).Warn(fault.Kind is CaptureFaultKind.DiskLow or CaptureFaultKind.DiskFull ? ProcessingLogCode.DiskLow
                 : fault.Kind is CaptureFaultKind.DeviceRemoved or CaptureFaultKind.DefaultDeviceChanged or CaptureFaultKind.FormatChanged ? ProcessingLogCode.CaptureDeviceChanged
                 : fault.Kind == CaptureFaultKind.AccessDenied ? ProcessingLogCode.PermissionDenied
                 : ProcessingLogCode.CaptureError);

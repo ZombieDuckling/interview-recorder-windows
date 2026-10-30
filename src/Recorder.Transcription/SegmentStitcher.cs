@@ -49,8 +49,18 @@ internal sealed class SegmentStitcher
                 var segment = ordered[i];
                 if (segment.Role != role) continue;
                 while (cursor < others.Length && others[cursor].End <= segment.Start) cursor++;
-                if (cursor < others.Length && others[cursor].Start < segment.End)
-                    ordered[i] = segment with { Speaker = SpeakerLabel.Unknown };
+                // whisper timestamps are coarse (snapped to window starts), so a small touch between the streams is not cross-talk.
+                // Unknown only for real overlap: at least 1 s and at least half of the shorter segment.
+                for (var k = cursor; k < others.Length && others[k].Start < segment.End; k++)
+                {
+                    var overlap = Math.Min(segment.End.TotalSeconds, others[k].End.TotalSeconds) - Math.Max(segment.Start.TotalSeconds, others[k].Start.TotalSeconds);
+                    var shorter = Math.Min((segment.End - segment.Start).TotalSeconds, (others[k].End - others[k].Start).TotalSeconds);
+                    if (overlap >= 1.0 && overlap >= 0.5 * shorter)
+                    {
+                        ordered[i] = segment with { Speaker = SpeakerLabel.Unknown };
+                        break;
+                    }
+                }
             }
         }
         for (var i = 0; i < ordered.Length; i++) ordered[i] = ordered[i] with { Index = i + 1 };
