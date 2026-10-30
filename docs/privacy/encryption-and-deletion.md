@@ -1,12 +1,10 @@
 # Encryption at rest and deletion
 
-## What the app encrypts
+## What version 1.0 protects, and what it does not
 
-The original recording chunks and temporary working files are encrypted with AES-GCM. The key for each session is protected by Windows DPAPI for the current Windows user. Another Windows user account cannot read them.
-
-## What the app does not encrypt
-
-The exported MP4 and DOCX files are normal files, so that other programs can open them. Protect them with device encryption.
+- **Not encrypted by the app:** the recording chunks (`capture/`), `interview_audio.mp4`, `transcript.json`, the Word file and `processing.log` are ordinary files on disk.
+- **Protected by the app:** each session folder is restricted to your Windows account and SYSTEM, so other Windows accounts on the PC cannot open it. Nothing is ever sent over the network.
+- **Encryption at rest is your device's job:** turn on BitLocker or Windows device encryption (below). This is the "documented volume-level encryption" route of the project plan. The app never claims that its files are encrypted.
 
 ## Turn on device encryption
 

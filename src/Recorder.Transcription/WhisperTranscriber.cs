@@ -101,7 +101,8 @@ public sealed partial class WhisperTranscriber : ITranscriber
 
     private static WhisperProcessor Build(WhisperFactory factory, TranscriptionRequest request, int threads)
     {
-        WhisperProcessorBuilder builder = factory.CreateBuilder().WithThreads(threads).WithLanguage(request.Language ?? "auto");
+        WhisperProcessorBuilder builder = factory.CreateBuilder().WithThreads(threads).WithLanguage(request.Language ?? "auto")
+            .WithNoContext(); // speech regions are independent: no carried prompt (it made whisper skip or repeat short turns)
         builder = request.Preset == TranscriptionPreset.Fast
             ? builder.WithGreedySamplingStrategy(g => g.WithBestOf(1))
             : builder.WithBeamSearchSamplingStrategy(b => b.WithBeamSize(5));
