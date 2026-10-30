@@ -4,7 +4,7 @@ The app records consented Google Meet research interviews. The researcher runs G
 
 ## Status
 
-Milestone M1 is in progress (native UI shell, settings, consent workflow, session schema). Nothing is released.
+Version 1.0.0 is being prepared. See docs/known-limitations.md.
 
 ## Requirements
 
@@ -51,3 +51,15 @@ The CI workflow .github/workflows/build.yml runs the same steps on windows-lates
 ## Privacy
 
 The app helps with POPIA-conscious research. Software alone cannot make a study POPIA compliant. Compliance also depends on research approvals, consent wording, institutional policy, device security, breach handling and retention decisions.
+
+## Install
+
+1. Download InterviewRecorder-Setup-x64.exe and SHA256SUMS.txt from the release.
+2. Check the hash in PowerShell: Get-FileHash .\InterviewRecorder-Setup-x64.exe -Algorithm SHA256. Compare it with SHA256SUMS.txt.
+3. Run the installer. No administrator rights are needed.
+4. If SmartScreen shows "Windows protected your PC", select "More info", then "Run anyway" (the installer is not signed yet).
+5. Start "Interview Recorder" from the Start Menu.
+
+## Uninstall
+
+Open Settings, Apps, Installed apps. Find "Interview Recorder". Select Uninstall. Your interviews stay in your data folder (default: Documents\Interview Recorder). Delete them from the app's session library first if you want to remove them.
