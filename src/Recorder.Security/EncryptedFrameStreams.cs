@@ -5,27 +5,23 @@ namespace Recorder.Security;
 
 internal static class FrameAad
 {
-    internal static byte[] Build(ulong frameIndex, bool isFinal)
+    internal static byte[] Build(ulong frameIndex, bool isFinal, ReadOnlySpan<byte> context)
     {
-        var aad = new byte[CryptoConstants.FrameIndexBytes + 1];
+        var aad = new byte[CryptoConstants.FrameIndexBytes + 1 + context.Length];
         BinaryPrimitives.WriteUInt64LittleEndian(aad.AsSpan(0, 8), frameIndex);
         aad[8] = isFinal ? (byte)1 : (byte)0;
+        context.CopyTo(aad.AsSpan(9));
         return aad;
     }
 }
 
 internal static class FrameNonce
 {
-    internal static byte[] Build(ReadOnlySpan<byte> fileNoncePrefix, ulong frameIndex)
+    // The key is unique per file (HKDF over a random salt), so the nonce is just the frame counter.
+    internal static byte[] Build(ulong frameIndex)
     {
-        if (fileNoncePrefix.Length != CryptoConstants.FileNoncePrefixBytes)
-        {
-            throw new ArgumentException("Invalid file nonce prefix length.", nameof(fileNoncePrefix));
-        }
-
         var nonce = new byte[CryptoConstants.GcmNonceBytes];
-        fileNoncePrefix.CopyTo(nonce);
-        BinaryPrimitives.WriteUInt64LittleEndian(nonce.AsSpan(CryptoConstants.FileNoncePrefixBytes), frameIndex);
+        BinaryPrimitives.WriteUInt64LittleEndian(nonce.AsSpan(CryptoConstants.NonceCounterOffset), frameIndex);
         return nonce;
     }
 }
@@ -33,17 +29,19 @@ internal static class FrameNonce
 internal sealed class EncryptedFrameWriteStream : Stream
 {
     private readonly FileStream _file;
-    private readonly byte[] _sessionKey;
-    private readonly byte[] _fileNoncePrefix;
+    private readonly byte[] _fileKey;
+    private readonly byte[] _context;
     private readonly byte[] _plaintextBuffer;
     private int _bufferFill;
     private ulong _nextFrameIndex;
     private bool _finalFrameWritten;
+    private bool _faulted;
     private bool _disposed;
 
-    public EncryptedFrameWriteStream(string path, byte[] sessionKey)
+    public EncryptedFrameWriteStream(string path, byte[] sessionKey, string context)
     {
         ArgumentNullException.ThrowIfNull(sessionKey);
+        ArgumentNullException.ThrowIfNull(context);
         if (sessionKey.Length != CryptoConstants.SessionKeyBytes)
         {
             throw new ArgumentException("Invalid session key length.", nameof(sessionKey));
@@ -55,13 +53,23 @@ internal sealed class EncryptedFrameWriteStream : Stream
             Directory.CreateDirectory(directory);
         }
 
-        _sessionKey = sessionKey;
-        _file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, FileOptions.SequentialScan);
-        _fileNoncePrefix = RandomNumberGenerator.GetBytes(CryptoConstants.FileNoncePrefixBytes);
+        _context = System.Text.Encoding.UTF8.GetBytes(context);
+        var salt = RandomNumberGenerator.GetBytes(CryptoConstants.FileSaltBytes);
+        _fileKey = KeyDerivation.DeriveFileKey(sessionKey, salt);
         _plaintextBuffer = new byte[CryptoConstants.FramePlaintextBytes];
+        _file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, FileOptions.SequentialScan);
 
-        _file.Write(CryptoConstants.EncryptedFileMagic);
-        _file.Write(_fileNoncePrefix);
+        try
+        {
+            _file.Write(CryptoConstants.EncryptedFileMagic);
+            _file.Write(salt);
+        }
+        catch
+        {
+            _faulted = true;
+            _file.Dispose();
+            throw;
+        }
     }
 
     public override bool CanRead => false;
@@ -72,6 +80,7 @@ internal sealed class EncryptedFrameWriteStream : Stream
 
     public override void Flush() => _file.Flush(flushToDisk: true);
 
+    // Only whole frames reach the file; the partial last frame stays in memory until Dispose.
     public override Task FlushAsync(CancellationToken cancellationToken) => _file.FlushAsync(cancellationToken);
 
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -94,20 +103,29 @@ internal sealed class EncryptedFrameWriteStream : Stream
             throw new InvalidOperationException("Cannot write after the final frame was sealed.");
         }
 
-        var remaining = buffer;
-        while (!remaining.IsEmpty)
+        ThrowIfFaulted();
+        try
         {
-            var space = _plaintextBuffer.Length - _bufferFill;
-            var take = Math.Min(space, remaining.Length);
-            remaining.Slice(0, take).CopyTo(_plaintextBuffer.AsSpan(_bufferFill));
-            _bufferFill += take;
-            remaining = remaining.Slice(take);
-
-            if (_bufferFill == _plaintextBuffer.Length)
+            var remaining = buffer;
+            while (!remaining.IsEmpty)
             {
-                WriteFrame(_plaintextBuffer.AsSpan(0, _bufferFill), isFinal: false);
-                _bufferFill = 0;
+                var space = _plaintextBuffer.Length - _bufferFill;
+                var take = Math.Min(space, remaining.Length);
+                remaining.Slice(0, take).CopyTo(_plaintextBuffer.AsSpan(_bufferFill));
+                _bufferFill += take;
+                remaining = remaining.Slice(take);
+
+                if (_bufferFill == _plaintextBuffer.Length)
+                {
+                    WriteFrame(_plaintextBuffer.AsSpan(0, _bufferFill), isFinal: false);
+                    _bufferFill = 0;
+                }
             }
+        }
+        catch
+        {
+            _faulted = true;
+            throw;
         }
     }
 
@@ -125,22 +143,41 @@ internal sealed class EncryptedFrameWriteStream : Stream
             throw new InvalidOperationException("Cannot write after the final frame was sealed.");
         }
 
-        var remaining = buffer;
-        while (!remaining.IsEmpty)
+        ThrowIfFaulted();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var space = _plaintextBuffer.Length - _bufferFill;
-            var take = Math.Min(space, remaining.Length);
-            remaining.Slice(0, take).CopyTo(_plaintextBuffer.AsMemory(_bufferFill));
-            _bufferFill += take;
-            remaining = remaining.Slice(take);
-
-            if (_bufferFill == _plaintextBuffer.Length)
+            var remaining = buffer;
+            while (!remaining.IsEmpty)
             {
-                await WriteFrameAsync(_plaintextBuffer.AsMemory(0, _bufferFill), isFinal: false, cancellationToken)
-                    .ConfigureAwait(false);
-                _bufferFill = 0;
+                cancellationToken.ThrowIfCancellationRequested();
+                var space = _plaintextBuffer.Length - _bufferFill;
+                var take = Math.Min(space, remaining.Length);
+                remaining.Slice(0, take).CopyTo(_plaintextBuffer.AsMemory(_bufferFill));
+                _bufferFill += take;
+                remaining = remaining.Slice(take);
+
+                if (_bufferFill == _plaintextBuffer.Length)
+                {
+                    await WriteFrameAsync(_plaintextBuffer.AsMemory(0, _bufferFill), isFinal: false, cancellationToken)
+                        .ConfigureAwait(false);
+                    _bufferFill = 0;
+                }
             }
+        }
+        catch
+        {
+            // A failed or cancelled write leaves the buffer and frame counter in an unknown state:
+            // the file must stay unsealed so the reader reports a missing final frame.
+            _faulted = true;
+            throw;
+        }
+    }
+
+    private void ThrowIfFaulted()
+    {
+        if (_faulted)
+        {
+            throw new IOException("A previous write failed; the encrypted file cannot be continued.");
         }
     }
 
@@ -153,12 +190,19 @@ internal sealed class EncryptedFrameWriteStream : Stream
 
         if (disposing)
         {
-            if (!_finalFrameWritten)
+            try
             {
-                WriteFrame(_plaintextBuffer.AsSpan(0, _bufferFill), isFinal: true);
+                if (!_finalFrameWritten && !_faulted)
+                {
+                    WriteFrame(_plaintextBuffer.AsSpan(0, _bufferFill), isFinal: true);
+                }
             }
-
-            _file.Dispose();
+            finally
+            {
+                CryptographicOperations.ZeroMemory(_fileKey);
+                CryptographicOperations.ZeroMemory(_plaintextBuffer);
+                _file.Dispose();
+            }
         }
 
         _disposed = true;
@@ -168,12 +212,12 @@ internal sealed class EncryptedFrameWriteStream : Stream
     private void WriteFrame(ReadOnlySpan<byte> plaintext, bool isFinal)
     {
         var frameIndex = _nextFrameIndex++;
-        var nonce = FrameNonce.Build(_fileNoncePrefix, frameIndex);
-        var aad = FrameAad.Build(frameIndex, isFinal);
+        var nonce = FrameNonce.Build(frameIndex);
+        var aad = FrameAad.Build(frameIndex, isFinal, _context);
         var ciphertext = plaintext.Length == 0 ? [] : new byte[plaintext.Length];
         var tag = new byte[CryptoConstants.GcmTagBytes];
 
-        using (var gcm = new AesGcm(_sessionKey, CryptoConstants.GcmTagBytes))
+        using (var gcm = new AesGcm(_fileKey, CryptoConstants.GcmTagBytes))
         {
             gcm.Encrypt(nonce, plaintext, ciphertext, tag, aad);
         }
@@ -198,12 +242,12 @@ internal sealed class EncryptedFrameWriteStream : Stream
     private async Task WriteFrameAsync(ReadOnlyMemory<byte> plaintext, bool isFinal, CancellationToken cancellationToken)
     {
         var frameIndex = _nextFrameIndex++;
-        var nonce = FrameNonce.Build(_fileNoncePrefix, frameIndex);
-        var aad = FrameAad.Build(frameIndex, isFinal);
+        var nonce = FrameNonce.Build(frameIndex);
+        var aad = FrameAad.Build(frameIndex, isFinal, _context);
         var ciphertext = plaintext.Length == 0 ? [] : new byte[plaintext.Length];
         var tag = new byte[CryptoConstants.GcmTagBytes];
 
-        using (var gcm = new AesGcm(_sessionKey, CryptoConstants.GcmTagBytes))
+        using (var gcm = new AesGcm(_fileKey, CryptoConstants.GcmTagBytes))
         {
             gcm.Encrypt(nonce, plaintext.Span, ciphertext, tag, aad);
         }
@@ -229,8 +273,8 @@ internal sealed class EncryptedFrameWriteStream : Stream
 internal sealed class EncryptedFrameReadStream : Stream
 {
     private readonly FileStream _file;
-    private readonly byte[] _sessionKey;
-    private readonly byte[] _fileNoncePrefix;
+    private readonly byte[] _fileKey;
+    private readonly byte[] _context;
     private readonly byte[] _framePlaintext;
     private int _framePlaintextOffset;
     private int _framePlaintextCount;
@@ -239,19 +283,27 @@ internal sealed class EncryptedFrameReadStream : Stream
     private bool _disposed;
     private bool _eof;
 
-    public EncryptedFrameReadStream(string path, byte[] sessionKey)
+    public EncryptedFrameReadStream(string path, byte[] sessionKey, string context)
     {
         ArgumentNullException.ThrowIfNull(sessionKey);
+        ArgumentNullException.ThrowIfNull(context);
         if (sessionKey.Length != CryptoConstants.SessionKeyBytes)
         {
             throw new ArgumentException("Invalid session key length.", nameof(sessionKey));
         }
 
-        _sessionKey = sessionKey;
-        _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.SequentialScan);
+        _context = System.Text.Encoding.UTF8.GetBytes(context);
         _framePlaintext = new byte[CryptoConstants.FramePlaintextBytes];
-        _fileNoncePrefix = new byte[CryptoConstants.FileNoncePrefixBytes];
-        ReadHeader();
+        _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.SequentialScan);
+        try
+        {
+            _fileKey = KeyDerivation.DeriveFileKey(sessionKey, ReadHeader());
+        }
+        catch
+        {
+            _file.Dispose();
+            throw;
+        }
     }
 
     public override bool CanRead => true;
@@ -352,6 +404,8 @@ internal sealed class EncryptedFrameReadStream : Stream
 
         if (disposing)
         {
+            CryptographicOperations.ZeroMemory(_fileKey);
+            CryptographicOperations.ZeroMemory(_framePlaintext);
             _file.Dispose();
         }
 
@@ -359,7 +413,7 @@ internal sealed class EncryptedFrameReadStream : Stream
         base.Dispose(disposing);
     }
 
-    private void ReadHeader()
+    private byte[] ReadHeader()
     {
         Span<byte> magic = stackalloc byte[4];
         ReadExactly(_file, magic);
@@ -368,7 +422,9 @@ internal sealed class EncryptedFrameReadStream : Stream
             throw new CryptographicException("Invalid encrypted file header.");
         }
 
-        ReadExactly(_file, _fileNoncePrefix);
+        var salt = new byte[CryptoConstants.FileSaltBytes];
+        ReadExactly(_file, salt);
+        return salt;
     }
 
     private bool LoadNextFrame()
@@ -403,9 +459,9 @@ internal sealed class EncryptedFrameReadStream : Stream
         var tag = new byte[CryptoConstants.GcmTagBytes];
         ReadExactly(_file, tag);
 
-        var nonce = FrameNonce.Build(_fileNoncePrefix, frameIndex);
-        var aad = FrameAad.Build(frameIndex, isFinal);
-        using (var gcm = new AesGcm(_sessionKey, CryptoConstants.GcmTagBytes))
+        var nonce = FrameNonce.Build(frameIndex);
+        var aad = FrameAad.Build(frameIndex, isFinal, _context);
+        using (var gcm = new AesGcm(_fileKey, CryptoConstants.GcmTagBytes))
         {
             gcm.Decrypt(nonce, ciphertext, tag, _framePlaintext.AsSpan(0, (int)plaintextLength), aad);
         }
@@ -458,9 +514,9 @@ internal sealed class EncryptedFrameReadStream : Stream
         var tag = new byte[CryptoConstants.GcmTagBytes];
         await ReadExactlyAsync(_file, tag, cancellationToken).ConfigureAwait(false);
 
-        var nonce = FrameNonce.Build(_fileNoncePrefix, frameIndex);
-        var aad = FrameAad.Build(frameIndex, isFinal);
-        using (var gcm = new AesGcm(_sessionKey, CryptoConstants.GcmTagBytes))
+        var nonce = FrameNonce.Build(frameIndex);
+        var aad = FrameAad.Build(frameIndex, isFinal, _context);
+        using (var gcm = new AesGcm(_fileKey, CryptoConstants.GcmTagBytes))
         {
             gcm.Decrypt(nonce, ciphertext, tag, _framePlaintext.AsSpan(0, (int)plaintextLength), aad);
         }

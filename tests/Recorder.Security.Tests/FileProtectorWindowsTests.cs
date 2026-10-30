@@ -53,6 +53,65 @@ public sealed class FileProtectorWindowsTests
         Assert.Equal(expected, ruleSids);
     }
 
+    [Fact]
+    public async Task DpapiKey_RoundTripsAndSurvivesNewProtector()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var sessionDir = CreateSessionDirectory();
+        var protector = new FileProtector();
+        await protector.EnsureSessionKeyAsync(sessionDir, CancellationToken.None);
+        var path = Path.Combine(sessionDir, "p.bin");
+        await using (var w = protector.OpenEncryptedWrite(sessionDir, path))
+        {
+            await w.WriteAsync(new byte[] { 1, 2, 3 });
+        }
+
+        // The on-disk key blob is DPAPI-wrapped, not the raw 32-byte key.
+        var blob = await File.ReadAllBytesAsync(CryptoConstants.SessionKeyPath(sessionDir));
+        Assert.True(blob.Length > CryptoConstants.SessionKeyBytes);
+
+        var fresh = new FileProtector();
+        await fresh.EnsureSessionKeyAsync(sessionDir, CancellationToken.None);
+        await using var r = fresh.OpenDecryptedRead(sessionDir, path);
+        var got = new byte[3];
+        await r.ReadExactlyAsync(got);
+        Assert.Equal(new byte[] { 1, 2, 3 }, got);
+    }
+
+    [Fact]
+    public void RestrictToCurrentUser_NewFilesInheritOnlyUserAndSystem()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var sessionDir = CreateSessionDirectory();
+        new FileProtector().RestrictToCurrentUser(sessionDir);
+        var file = Path.Combine(sessionDir, "later.txt");
+        File.WriteAllText(file, "x");
+
+        var rules = new FileInfo(file).GetAccessControl(AccessControlSections.Access)
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .Where(r => r.AccessControlType == AccessControlType.Allow)
+            .Select(r => r.IdentityReference.Value)
+            .Distinct()
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+
+        var expected = new[]
+        {
+            WindowsIdentity.GetCurrent().User!.Value,
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
+        }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        Assert.Equal(expected, rules);
+    }
+
     private static string CreateSessionDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "recorder-sec-win-" + Guid.NewGuid().ToString("N"));
