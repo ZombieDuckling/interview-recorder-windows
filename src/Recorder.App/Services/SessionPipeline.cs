@@ -36,6 +36,8 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
     private ProcessingLogWriter? _log;
     private CancellationTokenSource? _operationCts;
     private Timer? _tick;
+    private long _micLastSoundTicks;
+    private bool _micSilenceWarned;
 
     public SessionPipeline(
         IUserSettingsStore settings,
@@ -158,7 +160,9 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
             _activeDirectory = dir;
             _recordingDirectory = dir;
             _log.Info(ProcessingLogCode.CaptureStarted);
-            _tick = new Timer(_ => Changed?.Invoke(this, EventArgs.Empty), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
+            _micLastSoundTicks = Environment.TickCount64;
+            _micSilenceWarned = false;
+            _tick = new Timer(_ => OnTick(), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
             ActiveSession = new SessionListItem(code, dir, SessionState.Recording, startLocal, null, false, false);
             SetStatus("Recording", 0, busy: true, cancel: false, retry: false, error: null);
             return ActiveSession;
@@ -578,7 +582,35 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
         return _log;
     }
 
-    private void OnLevels(object? sender, LevelSample sample) => LevelsAvailable?.Invoke(this, sample);
+    private void OnLevels(object? sender, LevelSample sample)
+    {
+        // Exact digital silence (not a quiet room) from the mic usually means Windows blocks microphone access for desktop apps,
+        // or the device is muted at the driver: WASAPI then delivers zeros without any error.
+        if (sample.Role == StreamRole.Microphone && sample.PeakDbfs > -110f)
+        {
+            Interlocked.Exchange(ref _micLastSoundTicks, Environment.TickCount64);
+        }
+
+        LevelsAvailable?.Invoke(this, sample);
+    }
+
+    private void OnTick()
+    {
+        if (_captureSession is not null && !_micSilenceWarned && Environment.TickCount64 - Interlocked.Read(ref _micLastSoundTicks) > 6000)
+        {
+            _micSilenceWarned = true;
+            if (_recordingDirectory is not null)
+            {
+                Log(_recordingDirectory).Warn(ProcessingLogCode.PermissionDenied);
+            }
+
+            SetStatus("No sound at all from the microphone. Check Settings > Privacy & security > Microphone > \"Let desktop apps access your microphone\", and that the microphone is not muted. Recording continues.",
+                0, busy: true, cancel: false, retry: false, error: "MIC_SILENT");
+            return;
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
 
     private void OnFault(object? sender, CaptureFault fault)
     {
