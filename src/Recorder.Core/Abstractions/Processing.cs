@@ -24,6 +24,8 @@ public enum TranscriptionPreset
 public sealed record TranscriptionInput(StreamRole Role, string Wav16kPath, TimeSpan StartOffset);
 
 public sealed record TranscriptionRequest(
+    Guid SessionId,
+    string SessionCode,
     IReadOnlyList<TranscriptionInput> Inputs,
     string ModelPath,
     TranscriptionPreset Preset,

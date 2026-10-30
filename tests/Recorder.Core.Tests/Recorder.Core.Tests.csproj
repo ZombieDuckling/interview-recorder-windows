@@ -21,4 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Recorder.Core\Recorder.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures" />
+  </ItemGroup>
 </Project>
