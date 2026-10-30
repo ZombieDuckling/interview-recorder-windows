@@ -7,7 +7,14 @@ public static class AtomicFileWrite
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    internal static Action<int>? TestBytesWrittenHook { get; set; }
+    // Test-only fault injection. AsyncLocal so a hook set by one test never fires in another test running in parallel.
+    private static readonly AsyncLocal<Action<int>?> TestHook = new();
+
+    internal static Action<int>? TestBytesWrittenHook
+    {
+        get => TestHook.Value;
+        set => TestHook.Value = value;
+    }
 
     public static void WriteAllText(string targetPath, ReadOnlySpan<char> contents) =>
         WriteAllTextAsync(targetPath, contents.ToString(), CancellationToken.None).GetAwaiter().GetResult();
