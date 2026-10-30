@@ -52,6 +52,9 @@ public interface ISessionWorkflow
 
     Task ExportAsync(string sessionDirectory, CancellationToken cancellationToken);
 
+    /// <summary>Save researcher edits to transcript.json (atomic) and record the audit entry in session.json.</summary>
+    Task SaveTranscriptAsync(string sessionDirectory, Recorder.Core.Formats.Transcript transcript, CancellationToken cancellationToken);
+
     Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken);
 
     Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken);

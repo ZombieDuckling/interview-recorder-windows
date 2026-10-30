@@ -33,8 +33,9 @@ public partial class PrivacySettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _encryptionStatus =
-        "Working capture chunks and session keys use AES-GCM with keys wrapped by Windows DPAPI for your user account. " +
-        "Final MP4 and DOCX are ordinary files on disk — protect the PC with BitLocker or full-disk encryption for whole-drive protection.";
+        "What is protected: each session folder is restricted to your Windows account (other accounts on this PC cannot open it). " +
+        "What is not encrypted by the app: the recording chunks, the MP4, the transcript and the Word file are ordinary files. " +
+        "Turn on BitLocker or Windows device encryption to encrypt them on disk. Nothing is ever sent over the network.";
 
     [ObservableProperty]
     private string _statusMessage = string.Empty;

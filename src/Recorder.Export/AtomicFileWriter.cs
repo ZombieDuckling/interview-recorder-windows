@@ -20,13 +20,26 @@ internal static class AtomicFileWriter
             await writeToTempAsync(tempPath).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (File.Exists(targetPath))
+            // Durable before visible (spec section 8): flush the temp file to disk, then replace.
+            using (var flush = new FileStream(tempPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                File.Replace(tempPath, targetPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                flush.Flush(flushToDisk: true);
             }
-            else
+
+            try
             {
-                File.Move(tempPath, targetPath);
+                if (File.Exists(targetPath))
+                {
+                    File.Replace(tempPath, targetPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                }
+                else
+                {
+                    File.Move(tempPath, targetPath);
+                }
+            }
+            catch (IOException ex) when (File.Exists(targetPath))
+            {
+                throw new IOException($"{Path.GetFileName(targetPath)} is open in another program (for example Word). Close it and try again.", ex);
             }
         }
         catch

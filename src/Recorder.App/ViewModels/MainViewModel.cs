@@ -149,8 +149,14 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
+            string? dir = _services.Workflow.ActiveSession?.SessionDirectory;
+            CurrentPage = AppPage.ProcessingProgress;
             await _services.Workflow.StopAsync(CancellationToken.None);
             SyncWorkflowPage();
+            if (dir is not null && File.Exists(Path.Combine(dir, "transcript.json")) && _services.Workflow.Status.ErrorDetail is null)
+            {
+                OpenTranscriptEditor(dir);
+            }
         }
         catch (Exception ex)
         {
@@ -216,8 +222,7 @@ public partial class MainViewModel : ObservableObject
 
         if (row.State == SessionState.Exported)
         {
-            WindowStatus =
-                "This session is exported. Open the transcript editor from the export workflow when it is available in your build.";
+            OpenTranscriptEditor(row.Directory);
             return;
         }
 
@@ -255,6 +260,23 @@ public partial class MainViewModel : ObservableObject
             {
                 WindowStatus = ex.Message;
             }
+        }
+    }
+
+    [ObservableProperty]
+    private TranscriptEditorViewModel? _transcriptEditor;
+
+    private void OpenTranscriptEditor(string sessionDirectory)
+    {
+        try
+        {
+            var transcript = TranscriptIO.Read(Path.Combine(sessionDirectory, "transcript.json"));
+            TranscriptEditor = new TranscriptEditorViewModel(_services.Workflow, sessionDirectory, transcript);
+            CurrentPage = AppPage.TranscriptEditor;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CorruptedFileException or UnsupportedSchemaVersionException)
+        {
+            WindowStatus = ex.Message;
         }
     }
 

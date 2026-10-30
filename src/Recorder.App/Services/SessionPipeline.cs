@@ -293,6 +293,25 @@ public sealed class SessionPipeline : ISessionWorkflow, IDisposable
     public Task ExportAsync(string sessionDirectory, CancellationToken cancellationToken) =>
         RunOperationAsync(sessionDirectory, SessionErrorStage.Exporting, "EXPORT_FAILED", ct => ExportCoreAsync(sessionDirectory, ct), cancellationToken);
 
+    public async Task SaveTranscriptAsync(string sessionDirectory, Transcript transcript, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transcript);
+        string transcriptPath = Path.Combine(sessionDirectory, TranscriptFile);
+        string path = Path.Combine(sessionDirectory, ManifestFile);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        transcript.UpdatedAt = now;
+        await TranscriptIO.WriteAsync(transcriptPath, transcript, cancellationToken).ConfigureAwait(false);
+        SessionManifest manifest = SessionManifestIO.Read(path);
+        SetOutput(manifest, TranscriptFile, await Sha256Async(transcriptPath, cancellationToken).ConfigureAwait(false), now, null, (o, f) => o.TranscriptJson = f);
+        SessionAudit.Append(manifest, SessionAuditEvent.Edited, now);
+        if (transcript.Review is not null)
+        {
+            SessionAudit.Append(manifest, SessionAuditEvent.Reviewed, now);
+        }
+
+        await SessionManifestIO.WriteAsync(path, manifest, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken)
     {
         string path = Path.Combine(sessionDirectory, ManifestFile);

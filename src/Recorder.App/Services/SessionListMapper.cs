@@ -26,6 +26,19 @@ internal static class SessionListMapper
                 ListMessage: "This session could not be read (damaged session.json). Capture files were not changed.");
         }
 
+        if (entry.UnsupportedSchema)
+        {
+            return new SessionListItem(
+                entry.SessionCode,
+                entry.FolderPath,
+                State: null,
+                RecordedAt: null,
+                Duration: null,
+                Damaged: true,
+                NeedsRecovery: false,
+                ListMessage: "This session was made by a newer version of Interview Recorder and was not changed.");
+        }
+
         try
         {
             var manifest = SessionManifestIO.Read(Path.Combine(entry.FolderPath, "session.json"));

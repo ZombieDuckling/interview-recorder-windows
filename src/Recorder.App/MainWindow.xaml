@@ -99,6 +99,8 @@
                                     Visibility="{Binding CurrentPage, Converter={StaticResource PageVisibility}, ConverterParameter=RecordingConsole}"/>
         <views:ProcessingProgressView DataContext="{Binding Processing}"
                                       Visibility="{Binding CurrentPage, Converter={StaticResource PageVisibility}, ConverterParameter=ProcessingProgress}"/>
+        <views:TranscriptEditorView DataContext="{Binding TranscriptEditor}"
+                                    Visibility="{Binding CurrentPage, Converter={StaticResource PageVisibility}, ConverterParameter=TranscriptEditor}"/>
       </Grid>
     </Grid>
   </DockPanel>

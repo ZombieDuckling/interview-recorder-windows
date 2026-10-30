@@ -84,6 +84,8 @@ public sealed class FakeSessionWorkflow : ISessionWorkflow, IDisposable
 
     public Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken) => Task.CompletedTask;
 
+    public Task SaveTranscriptAsync(string sessionDirectory, Recorder.Core.Formats.Transcript transcript, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken)
     {
         _status = new WorkflowStatus("Cancelled.", 0, false, false, true, null);

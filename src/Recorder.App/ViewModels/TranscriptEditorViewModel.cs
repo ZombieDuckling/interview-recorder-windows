@@ -52,8 +52,11 @@ public sealed partial class TranscriptEditorViewModel : ObservableObject
     private readonly string _audioPath;
     private TranscriptDocument _document;
 
-    public TranscriptEditorViewModel(string sessionFolder, TranscriptDocument document, string audioFileName = "interview_audio.mp4")
+    private readonly Services.ISessionWorkflow _workflow;
+
+    public TranscriptEditorViewModel(Services.ISessionWorkflow workflow, string sessionFolder, TranscriptDocument document, string audioFileName = "interview_audio.mp4")
     {
+        _workflow = workflow;
         SessionFolder = sessionFolder;
         _transcriptPath = Path.Combine(sessionFolder, "transcript.json");
         _audioPath = Path.Combine(sessionFolder, audioFileName);
@@ -107,40 +110,46 @@ public sealed partial class TranscriptEditorViewModel : ObservableObject
         SelectedSegment = Segments[index];
     }
 
+    [ObservableProperty]
+    private string _statusMessage = string.Empty;
+
     [RelayCommand]
     private async Task SaveAsync(CancellationToken cancellationToken)
     {
-        SyncSegmentsToDocument();
-        _document.UpdatedAt = DateTimeOffset.UtcNow;
-        await TranscriptIO.WriteAsync(_transcriptPath, _document, cancellationToken).ConfigureAwait(true);
+        try
+        {
+            SyncSegmentsToDocument();
+            await _workflow.SaveTranscriptAsync(SessionFolder, _document, cancellationToken).ConfigureAwait(true);
+            StatusMessage = "Transcript saved. The original audio is unchanged.";
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusMessage = ex.Message;
+        }
     }
 
+    /// <summary>Saves edits, applies the optional reviewer sign-off, then exports through the session workflow
+    /// (header data from session.json, audit entry, outputs, Exported state; re-exports go to exports/).</summary>
     [RelayCommand]
     private async Task ExportDocxAsync(CancellationToken cancellationToken)
     {
-        SyncSegmentsToDocument();
-        var exportSettings = ExportSettings ?? new ExportSettingsViewModel();
-        var exportedAt = DateTimeOffset.UtcNow;
-        var outputPath = exportSettings.UseReExportFolder
-            ? ExportPaths.ReExportPath(SessionFolder, exportedAt.ToLocalTime())
-            : Path.Combine(SessionFolder, ExportPaths.PrimaryDocxFileName);
+        try
+        {
+            SyncSegmentsToDocument();
+            var settings = ExportSettings ?? new ExportSettingsViewModel();
+            if (settings.IncludeReview && !string.IsNullOrWhiteSpace(settings.ReviewerInitials))
+            {
+                TranscriptEditor.SetReview(_document, settings.ReviewerInitials.Trim(), null, DateTimeOffset.UtcNow);
+            }
 
-        var duration = TimeSpan.FromSeconds(_document.Segments.Max(s => s.End));
-        var request = new DocxExportRequest(
-            SessionCode: _document.SessionCode,
-            RecordedAt: _document.CreatedAt,
-            Duration: duration,
-            StudyCode: exportSettings.StudyCode,
-            EngineVersion: _document.Engine.Version,
-            ModelName: _document.Engine.Model,
-            Segments: TranscriptMapping.ToDocxSegments(_document),
-            OutputPath: outputPath,
-            ExportedAt: exportedAt,
-            ReviewerInitials: exportSettings.IncludeReview ? exportSettings.ReviewerInitials : null,
-            ReviewedAt: exportSettings.IncludeReview ? exportedAt : null);
-
-        var exporter = new DocxExporter();
-        await exporter.ExportAsync(request, cancellationToken).ConfigureAwait(true);
+            await _workflow.SaveTranscriptAsync(SessionFolder, _document, cancellationToken).ConfigureAwait(true);
+            await _workflow.ExportAsync(SessionFolder, cancellationToken).ConfigureAwait(true);
+            StatusMessage = _workflow.Status.ErrorDetail is null ? "Word file exported to the session folder." : _workflow.Status.Message;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusMessage = ex.Message;
+        }
     }
 
     public ExportSettingsViewModel? ExportSettings { get; set; }

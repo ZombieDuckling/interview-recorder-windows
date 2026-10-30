@@ -49,6 +49,9 @@ internal sealed class UnavailableSessionWorkflow : ISessionWorkflow
     public Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Status.Message));
 
+    public Task SaveTranscriptAsync(string sessionDirectory, Recorder.Core.Formats.Transcript transcript, CancellationToken cancellationToken) =>
+        Task.FromException(new InvalidOperationException("Saving is not available."));
+
     public Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task RetryCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken) =>

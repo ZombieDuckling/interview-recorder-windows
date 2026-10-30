@@ -10,6 +10,7 @@ public enum AppPage
     DiagnosticsHelp,
     RecordingConsole,
     ProcessingProgress,
+    TranscriptEditor,
 }
 
 public sealed record NavItem(AppPage Page, string Title, string AutomationId);
