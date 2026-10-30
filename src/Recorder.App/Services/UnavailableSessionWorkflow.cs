@@ -32,8 +32,7 @@ internal sealed class UnavailableSessionWorkflow : ISessionWorkflow
     public event EventHandler<LevelSample>? LevelsAvailable;
 #pragma warning restore CS0067
 
-    public IReadOnlyList<SessionListItem> ListSessions(string dataRoot) =>
-        SessionCatalog.ReadSessions(dataRoot);
+    public IReadOnlyList<SessionListItem> ListSessions(string dataRoot) => SessionListMapper.List(dataRoot);
 
     public Task<SessionListItem> StartAsync(SessionStartRequest request, CancellationToken cancellationToken) =>
         Task.FromException<SessionListItem>(new InvalidOperationException(Status.Message));
@@ -41,7 +40,7 @@ internal sealed class UnavailableSessionWorkflow : ISessionWorkflow
     public Task StopAsync(CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Status.Message));
 
-    public Task TranscribeAsync(CancellationToken cancellationToken) =>
+    public Task TranscribeAsync(string sessionDirectory, CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Status.Message));
 
     public Task ExportAsync(string sessionDirectory, CancellationToken cancellationToken) =>
@@ -50,8 +49,8 @@ internal sealed class UnavailableSessionWorkflow : ISessionWorkflow
     public Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Status.Message));
 
-    public Task CancelCurrentOperationAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task RetryCurrentOperationAsync(CancellationToken cancellationToken) =>
+    public Task RetryCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Status.Message));
 }

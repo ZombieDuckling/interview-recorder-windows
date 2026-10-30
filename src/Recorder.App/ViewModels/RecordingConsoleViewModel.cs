@@ -3,13 +3,17 @@ using CommunityToolkit.Mvvm.Input;
 using Recorder.App.Services;
 using Recorder.Core.Abstractions;
 using Recorder.Core.Formats;
+using System.Windows.Threading;
 
 namespace Recorder.App.ViewModels;
 
 public partial class RecordingConsoleViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
-    private readonly System.Timers.Timer _uiTimer;
+    private readonly DispatcherTimer _uiTimer;
+    private LevelSample _latestMic = new(StreamRole.Microphone, -60f, -60f);
+    private LevelSample _latestMeeting = new(StreamRole.Meeting, -60f, -60f);
+    private bool _disposed;
 
     public RecordingConsoleViewModel(AppServices services)
     {
@@ -18,11 +22,10 @@ public partial class RecordingConsoleViewModel : ObservableObject, IDisposable
         MeetingMeter = new LevelMeterViewModel { Label = "Meeting audio" };
         _services.Workflow.LevelsAvailable += OnLevels;
         _services.Workflow.Changed += OnWorkflowChanged;
-        _uiTimer = new System.Timers.Timer(500);
-        _uiTimer.Elapsed += (_, _) => App.Current.Dispatcher.Invoke(UpdateFromWorkflow);
+        _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        _uiTimer.Tick += (_, _) => RefreshUi();
         _uiTimer.Start();
-        UpdateFromWorkflow();
-        UpdateDisk();
+        RefreshUi();
     }
 
     public LevelMeterViewModel MicMeter { get; }
@@ -48,53 +51,62 @@ public partial class RecordingConsoleViewModel : ObservableObject, IDisposable
 
     private void OnLevels(object? sender, LevelSample sample)
     {
-        App.Current.Dispatcher.Invoke(() =>
+        if (sample.Role == StreamRole.Microphone)
         {
-            if (sample.Role == StreamRole.Microphone)
-            {
-                MicMeter.PeakDbfs = sample.PeakDbfs;
-                MicMeter.RmsDbfs = sample.RmsDbfs;
-            }
-            else
-            {
-                MeetingMeter.PeakDbfs = sample.PeakDbfs;
-                MeetingMeter.RmsDbfs = sample.RmsDbfs;
-            }
-        });
+            _latestMic = sample;
+        }
+        else
+        {
+            _latestMeeting = sample;
+        }
     }
 
-    private void OnWorkflowChanged(object? sender, EventArgs e) =>
-        App.Current.Dispatcher.Invoke(UpdateFromWorkflow);
+    private void OnWorkflowChanged(object? sender, EventArgs e) => RefreshUi();
 
-    private void UpdateFromWorkflow()
+    private void RefreshUi()
     {
+        MicMeter.PeakDbfs = _latestMic.PeakDbfs;
+        MicMeter.RmsDbfs = _latestMic.RmsDbfs;
+        MeetingMeter.PeakDbfs = _latestMeeting.PeakDbfs;
+        MeetingMeter.RmsDbfs = _latestMeeting.RmsDbfs;
         IsRecording = _services.Workflow.IsRecording;
         Elapsed = _services.Workflow.RecordingElapsed;
         StatusMessage = _services.Workflow.Status.Message;
-        UpdateDisk();
+        FreeDiskText = ReadFreeDisk();
     }
 
-    private void UpdateDisk()
+    private string ReadFreeDisk()
     {
         try
         {
             var root = _services.Settings.Current.DataRoot;
-            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(root))!);
+            var pathRoot = Path.GetPathRoot(Path.GetFullPath(root));
+            if (string.IsNullOrEmpty(pathRoot))
+            {
+                return "Disk space unknown for this storage location.";
+            }
+
+            var drive = new DriveInfo(pathRoot);
             var freeGb = drive.AvailableFreeSpace / (1024d * 1024 * 1024);
-            FreeDiskText = freeGb < 2
+            return freeGb < 2
                 ? $"Low disk space: {freeGb:F1} GB free — stop soon to avoid losing the recording."
                 : $"{freeGb:F1} GB free disk space";
         }
-        catch (IOException ex)
+        catch (Exception)
         {
-            FreeDiskText = ex.Message;
+            return "Disk space unknown.";
         }
     }
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _uiTimer.Stop();
-        _uiTimer.Dispose();
         _services.Workflow.LevelsAvailable -= OnLevels;
         _services.Workflow.Changed -= OnWorkflowChanged;
         GC.SuppressFinalize(this);

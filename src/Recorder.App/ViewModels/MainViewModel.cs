@@ -3,12 +3,14 @@ using CommunityToolkit.Mvvm.Input;
 using Recorder.App.Navigation;
 using Recorder.App.Services;
 using Recorder.Core.Formats;
+using Recorder.Core.IO;
 
 namespace Recorder.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
     private readonly AppServices _services;
+    private RecordingConsoleViewModel? _recordingConsole;
 
     public MainViewModel(AppServices services)
     {
@@ -16,14 +18,13 @@ public partial class MainViewModel : ObservableObject
         Welcome = new WelcomeViewModel(services);
         Devices = new DevicesViewModel(services);
         NewInterview = new NewInterviewViewModel(services);
-        RecordingConsole = new RecordingConsoleViewModel(services);
         Processing = new ProcessingProgressViewModel(services);
         SessionLibrary = new SessionLibraryViewModel(services);
         Privacy = new PrivacySettingsViewModel(services);
         Diagnostics = new DiagnosticsHelpViewModel(services);
 
-        RecordingConsole.StopRequested += (_, _) => _ = ConfirmStopRecordingAsync();
-        SessionLibrary.OpenRequested += (_, row) => HandleOpenSession(row);
+        SessionLibrary.OpenRequested += (_, row) => _ = HandleOpenSessionAsync(row);
+        SessionLibrary.RecoverRequested += (_, row) => _ = RecoverSessionAsync(row);
 
         _services.Workflow.Changed += OnWorkflowChanged;
 
@@ -47,7 +48,8 @@ public partial class MainViewModel : ObservableObject
 
     public NewInterviewViewModel NewInterview { get; }
 
-    public RecordingConsoleViewModel RecordingConsole { get; }
+    public RecordingConsoleViewModel RecordingConsole =>
+        _recordingConsole ??= CreateRecordingConsole();
 
     public ProcessingProgressViewModel Processing { get; }
 
@@ -70,11 +72,23 @@ public partial class MainViewModel : ObservableObject
 
     public bool IsRecording => _services.Workflow.IsRecording;
 
+    private RecordingConsoleViewModel CreateRecordingConsole()
+    {
+        var vm = new RecordingConsoleViewModel(_services);
+        vm.StopRequested += (_, _) => _ = ConfirmStopRecordingAsync();
+        return vm;
+    }
+
     partial void OnCurrentPageChanged(AppPage value)
     {
         if (value is AppPage.Welcome or AppPage.Devices or AppPage.NewInterview or AppPage.SessionLibrary or AppPage.PrivacySettings or AppPage.DiagnosticsHelp)
         {
             SelectedNavItem = NavItems.FirstOrDefault(n => n.Page == value);
+        }
+
+        if (value == AppPage.RecordingConsole)
+        {
+            _ = RecordingConsole;
         }
     }
 
@@ -103,6 +117,11 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            if (!NewInterview.ConfirmMissingInputs() || !NewInterview.ConfirmScopeNotice())
+            {
+                return;
+            }
+
             var request = NewInterview.BuildStartRequest();
             await _services.Workflow.StartAsync(request, CancellationToken.None);
             SyncWorkflowPage();
@@ -155,7 +174,7 @@ public partial class MainViewModel : ObservableObject
     }
 
     private void OnWorkflowChanged(object? sender, EventArgs e) =>
-        App.Current.Dispatcher.Invoke(() =>
+        App.Current.Dispatcher.BeginInvoke(() =>
         {
             SyncWorkflowPage();
             OnPropertyChanged(nameof(IsRecording));
@@ -181,13 +200,75 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void HandleOpenSession(SessionRowViewModel row)
+    private async Task HandleOpenSessionAsync(SessionRowViewModel row)
     {
-        WindowStatus = $"Selected {row.SessionCode} ({row.State}).";
-        if (row.State is SessionState.ReadyToTranscribe or SessionState.Failed)
+        if (row.Damaged)
+        {
+            WindowStatus = row.ListMessage ?? "This session could not be read.";
+            return;
+        }
+
+        if (row.NeedsRecovery)
+        {
+            await RecoverSessionAsync(row);
+            return;
+        }
+
+        if (row.State == SessionState.Exported)
+        {
+            WindowStatus =
+                "This session is exported. Open the transcript editor from the export workflow when it is available in your build.";
+            return;
+        }
+
+        if (row.State == SessionState.Failed)
         {
             CurrentPage = AppPage.ProcessingProgress;
-            _ = _services.Workflow.TranscribeAsync(CancellationToken.None);
+            try
+            {
+                var manifest = SessionManifestIO.Read(Path.Combine(row.Directory, "session.json"));
+                if (manifest.Error?.Stage is SessionErrorStage.Finalizing or SessionErrorStage.Recording)
+                {
+                    await _services.Workflow.RecoverAsync(row.Directory, CancellationToken.None);
+                }
+                else
+                {
+                    await _services.Workflow.RetryCurrentOperationAsync(row.Directory, CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowStatus = ex.Message;
+            }
+
+            return;
+        }
+
+        if (row.State == SessionState.ReadyToTranscribe)
+        {
+            CurrentPage = AppPage.ProcessingProgress;
+            try
+            {
+                await _services.Workflow.TranscribeAsync(row.Directory, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                WindowStatus = ex.Message;
+            }
+        }
+    }
+
+    private async Task RecoverSessionAsync(SessionRowViewModel row)
+    {
+        try
+        {
+            await _services.Workflow.RecoverAsync(row.Directory, CancellationToken.None);
+            CurrentPage = AppPage.ProcessingProgress;
+            WindowStatus = "Recovery started.";
+        }
+        catch (Exception ex)
+        {
+            WindowStatus = ex.Message;
         }
     }
 }

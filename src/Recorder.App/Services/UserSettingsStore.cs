@@ -1,54 +1,48 @@
-using System.Text.Json;
+using Recorder.Core.Settings;
 
 namespace Recorder.App.Services;
 
 public sealed class UserSettingsStore : IUserSettingsStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
-    private readonly string _settingsPath;
     private UserSettings _current;
 
     public UserSettingsStore()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var folder = Path.Combine(appData, "Interview Recorder");
-        Directory.CreateDirectory(folder);
-        _settingsPath = Path.Combine(folder, "user-settings.json");
-        _current = LoadFromDisk() ?? new UserSettings();
+        var loaded = AppSettingsStore.LoadOrDefault();
+        _current = Map(loaded.Settings);
+        CorruptSettingsMessage = loaded.CorruptSettingsMessage;
     }
 
     public UserSettings Current => _current;
+
+    public string? CorruptSettingsMessage { get; }
 
     public event EventHandler? SettingsChanged;
 
     public void Save(UserSettings settings)
     {
+        AppSettingsStore.SaveAsync(MapToAppSettings(settings)).GetAwaiter().GetResult();
         _current = settings;
-        var json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(_settingsPath, json);
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private UserSettings? LoadFromDisk()
-    {
-        if (!File.Exists(_settingsPath))
+    private static UserSettings Map(AppSettings settings) =>
+        new()
         {
-            return null;
-        }
+            DataRoot = settings.DataRoot,
+            RetentionDays = settings.RetentionDays ?? 365,
+            MaxTranscriptionThreads = settings.ThreadCap,
+            TranscriptionPreset = settings.Preset,
+            FirstRunCompleted = settings.FirstRunCompleted,
+        };
 
-        try
+    private static AppSettings MapToAppSettings(UserSettings settings) =>
+        new()
         {
-            var json = File.ReadAllText(_settingsPath);
-            return JsonSerializer.Deserialize<UserSettings>(json);
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
+            DataRoot = settings.DataRoot,
+            RetentionDays = settings.RetentionDays,
+            ThreadCap = settings.MaxTranscriptionThreads,
+            Preset = settings.TranscriptionPreset,
+            FirstRunCompleted = settings.FirstRunCompleted,
+        };
 }

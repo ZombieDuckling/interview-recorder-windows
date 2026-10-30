@@ -2,6 +2,8 @@
 using Recorder.App.Helpers;
 using Recorder.App.Services;
 using Recorder.App.ViewModels;
+using Recorder.Audio.Windows;
+using Recorder.Security;
 
 namespace Recorder.App;
 
@@ -16,12 +18,21 @@ public partial class App : Application
         var services = new AppServices(
             settings,
             workflow,
-            BackendFactory.CreateAudioCapture(),
-            BackendFactory.CreateRetention(),
-            BackendFactory.CreateFileProtector());
+            new WasapiAudioCapture(),
+            new RetentionService(),
+            new FileProtector());
         AppServices.Initialize(services);
         MainViewModel = new MainViewModel(services);
         HighContrastTheme.ApplyIfNeeded(this);
+
+        if (!string.IsNullOrWhiteSpace(settings.CorruptSettingsMessage))
+        {
+            MessageBox.Show(
+                settings.CorruptSettingsMessage,
+                "Settings could not be loaded",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
 
         var window = new MainWindow();
         window.Show();

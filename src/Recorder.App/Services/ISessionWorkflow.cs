@@ -13,9 +13,12 @@ public sealed record SessionStartRequest(
 public sealed record SessionListItem(
     string SessionCode,
     string SessionDirectory,
-    SessionState State,
-    DateTimeOffset RecordedAt,
-    TimeSpan? Duration);
+    SessionState? State,
+    DateTimeOffset? RecordedAt,
+    TimeSpan? Duration,
+    bool Damaged,
+    bool NeedsRecovery,
+    string? ListMessage = null);
 
 public sealed record WorkflowStatus(
     string Message,
@@ -45,13 +48,13 @@ public interface ISessionWorkflow
 
     Task StopAsync(CancellationToken cancellationToken);
 
-    Task TranscribeAsync(CancellationToken cancellationToken);
+    Task TranscribeAsync(string sessionDirectory, CancellationToken cancellationToken);
 
     Task ExportAsync(string sessionDirectory, CancellationToken cancellationToken);
 
     Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken);
 
-    Task CancelCurrentOperationAsync(CancellationToken cancellationToken);
+    Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken);
 
-    Task RetryCurrentOperationAsync(CancellationToken cancellationToken);
+    Task RetryCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken);
 }

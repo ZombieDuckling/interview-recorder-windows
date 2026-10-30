@@ -39,21 +39,51 @@ public partial class NewInterviewViewModel : ObservableObject
     private string _participantIdError = string.Empty;
 
     [ObservableProperty]
+    private string _studyCodeError = string.Empty;
+
+    [ObservableProperty]
     private string _scopeNotice =
         "Meeting audio uses system loopback on the output device you select. It can include other sounds on this PC. Use headphones and a dedicated meeting output device when you can.";
 
     [ObservableProperty]
     private string _statusMessage = string.Empty;
 
-    public bool CanStart => ConsentConfirmed && string.IsNullOrEmpty(ParticipantIdError) && !string.IsNullOrWhiteSpace(ParticipantId);
+    public bool HasMicrophone => SelectedMicrophone is not null;
+
+    public bool HasMeetingDevice => SelectedMeetingDevice is not null;
+
+    public bool CanStart =>
+        ConsentConfirmed
+        && string.IsNullOrEmpty(ParticipantIdError)
+        && string.IsNullOrEmpty(StudyCodeError)
+        && !string.IsNullOrWhiteSpace(ParticipantId)
+        && (HasMicrophone || HasMeetingDevice);
 
     partial void OnParticipantIdChanged(string value)
     {
         ParticipantIdError = ParticipantIdValidator.TryValidate(value, out var reason) ? string.Empty : reason;
-        OnPropertyChanged(nameof(CanStart));
+        NotifyCanStartChanged();
     }
 
-    partial void OnConsentConfirmedChanged(bool value) => OnPropertyChanged(nameof(CanStart));
+    partial void OnStudyCodeChanged(string value)
+    {
+        StudyCodeError = StudyCodeValidator.TryValidateOptional(value, out var reason) ? string.Empty : reason;
+        NotifyCanStartChanged();
+    }
+
+    partial void OnConsentConfirmedChanged(bool value) => NotifyCanStartChanged();
+
+    partial void OnSelectedMicrophoneChanged(DeviceRowViewModel? value)
+    {
+        OnPropertyChanged(nameof(HasMicrophone));
+        NotifyCanStartChanged();
+    }
+
+    partial void OnSelectedMeetingDeviceChanged(DeviceRowViewModel? value)
+    {
+        OnPropertyChanged(nameof(HasMeetingDevice));
+        NotifyCanStartChanged();
+    }
 
     [RelayCommand]
     private void RefreshDevices()
@@ -74,6 +104,37 @@ public partial class NewInterviewViewModel : ObservableObject
         SelectedMicrophone ??= CaptureDevices.FirstOrDefault(d => d.IsDefault) ?? CaptureDevices.FirstOrDefault();
     }
 
+    public bool ConfirmScopeNotice()
+    {
+        return System.Windows.MessageBox.Show(
+            ScopeNotice + Environment.NewLine + Environment.NewLine + "Continue and start recording?",
+            "System audio scope",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes;
+    }
+
+    public bool ConfirmMissingInputs()
+    {
+        if (HasMicrophone && HasMeetingDevice)
+        {
+            return true;
+        }
+
+        if (!HasMicrophone && !HasMeetingDevice)
+        {
+            StatusMessage = "Select at least a microphone or a meeting output device.";
+            return false;
+        }
+
+        var missing = !HasMicrophone ? "microphone" : "meeting output device";
+        var only = HasMicrophone ? "microphone only" : "meeting audio only";
+        return System.Windows.MessageBox.Show(
+            $"No {missing} is selected. Recording will use {only}. Continue?",
+            "Single audio input",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes;
+    }
+
     public SessionStartRequest BuildStartRequest()
     {
         if (!ParticipantIdValidator.TryValidate(ParticipantId, out var reason))
@@ -81,9 +142,19 @@ public partial class NewInterviewViewModel : ObservableObject
             throw new InvalidOperationException(reason);
         }
 
+        if (!StudyCodeValidator.TryValidateOptional(StudyCode, out var studyReason))
+        {
+            throw new InvalidOperationException(studyReason);
+        }
+
         if (!ConsentConfirmed)
         {
             throw new InvalidOperationException("Consent must be confirmed before recording.");
+        }
+
+        if (!HasMicrophone && !HasMeetingDevice)
+        {
+            throw new InvalidOperationException("Select at least a microphone or meeting output device.");
         }
 
         return new SessionStartRequest(
@@ -93,4 +164,6 @@ public partial class NewInterviewViewModel : ObservableObject
             SelectedMicrophone?.Id,
             ConsentConfirmed);
     }
+
+    private void NotifyCanStartChanged() => OnPropertyChanged(nameof(CanStart));
 }

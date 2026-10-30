@@ -1,29 +1,28 @@
 namespace Recorder.App.Services;
 
 using Recorder.Core.Abstractions;
+using Recorder.Core.Settings;
 
 public sealed class UserSettings
 {
-    public string DataRoot { get; set; } = DefaultDataRoot();
+    public string DataRoot { get; set; } = AppSettingsPaths.DefaultDataRoot;
 
-    public int RetentionDays { get; set; } = 90;
+    public int RetentionDays { get; set; } = 365;
 
-    public int MaxTranscriptionThreads { get; set; } = 2;
+    public int MaxTranscriptionThreads { get; set; } = 4;
 
     public TranscriptionPreset TranscriptionPreset { get; set; } = TranscriptionPreset.Balanced;
 
     public bool FirstRunCompleted { get; set; }
 
-    public static string DefaultDataRoot()
-    {
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        return Path.Combine(documents, "Interview Recorder");
-    }
+    public static string DefaultDataRoot() => AppSettingsPaths.DefaultDataRoot;
 }
 
 public interface IUserSettingsStore
 {
     UserSettings Current { get; }
+
+    string? CorruptSettingsMessage { get; }
 
     void Save(UserSettings settings);
 
