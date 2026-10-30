@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Dev tool (win-lead): runs the real finalize → transcribe → DOCX chain on real speech chunks, outside the WPF app. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Recorder.Core\Recorder.Core.csproj" />
+    <ProjectReference Include="..\..\src\Recorder.Media\Recorder.Media.csproj" />
+    <ProjectReference Include="..\..\src\Recorder.Transcription\Recorder.Transcription.csproj" />
+    <ProjectReference Include="..\..\src\Recorder.Export\Recorder.Export.csproj" />
+  </ItemGroup>
+</Project>

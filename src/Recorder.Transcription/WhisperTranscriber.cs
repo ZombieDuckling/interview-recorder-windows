@@ -41,21 +41,33 @@ public sealed class WhisperTranscriber : ITranscriber
                 int window = (int)(WindowSeconds * PcmWindowReader.SampleRate);
                 int step = (int)((WindowSeconds - OverlapSeconds) * PcmWindowReader.SampleRate);
                 var buffer = new float[window];
-                for (long start = 0; start < reader.FrameCount; start += step)
+                // Transcribe only where this stream has speech: whisper snaps timestamps to the window start and stretches
+                // segments across silence, which would make the mic and meeting streams appear to overlap (label Unknown).
+                IReadOnlyList<(long Start, long End)> regions = SpeechRegions.Find(reader, cancellationToken);
+                long scanned = 0;
+                foreach ((long regionStart, long regionEnd) in regions)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    int count = reader.Read(start, buffer);
-                    bool last = start + count >= reader.FrameCount;
-                    if (Rms(buffer.AsSpan(0, count)) >= SilenceRms)
+                    for (long start = regionStart; start < regionEnd; start += step)
                     {
-                        List<WindowSegment> found = await TranscribeWindowAsync(processor, buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
-                        stitcher.AddWindow(input.Role, input.StartOffset.TotalSeconds, (double)start / PcmWindowReader.SampleRate, (double)count / PcmWindowReader.SampleRate, found);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int want = (int)Math.Min(window, regionEnd - start);
+                        int count = reader.Read(start, buffer.AsSpan(0, want));
+                        if (count > 0 && Rms(buffer.AsSpan(0, count)) >= SilenceRms)
+                        {
+                            List<WindowSegment> found = await TranscribeWindowAsync(processor, buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+                            stitcher.AddWindow(input.Role, input.StartOffset.TotalSeconds, (double)start / PcmWindowReader.SampleRate, (double)count / PcmWindowReader.SampleRate, found);
+                        }
+
+                        if (start + want >= regionEnd) break;
                     }
-                    double advanced = last ? (double)(reader.FrameCount - start) : step;
-                    doneSeconds += advanced / PcmWindowReader.SampleRate;
+
+                    doneSeconds += (double)(regionEnd - scanned) / PcmWindowReader.SampleRate;
+                    scanned = regionEnd;
                     progress?.Report(new TranscriptionProgress(Math.Clamp(doneSeconds / totalSeconds, 0, 1), TimeSpan.FromSeconds(doneSeconds), TimeSpan.FromSeconds(totalSeconds)));
-                    if (last) break;
                 }
+
+                doneSeconds += (double)(reader.FrameCount - scanned) / PcmWindowReader.SampleRate;
+                progress?.Report(new TranscriptionProgress(Math.Clamp(doneSeconds / totalSeconds, 0, 1), TimeSpan.FromSeconds(doneSeconds), TimeSpan.FromSeconds(totalSeconds)));
             }
             // Map to the frozen transcript.json model (spec section 5). SessionId/SessionCode are filled by the caller.
             var segments = stitcher.Build()
