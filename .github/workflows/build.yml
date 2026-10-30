@@ -127,7 +127,11 @@ jobs:
           & "$app\ffmpeg.exe" -v error -i out\meeting.wav -af "adelay=8000,apad=pad_dur=1" -ar 48000 -ac 1 -c:a pcm_s16le -f segment -segment_time 10 -segment_start_number 1 "$s\capture\meeting\%06d.wav"
           dotnet run --project tools/PipelineProbe -c Release -- $s "$app\models\ggml-base-q5_1.bin" "$app\ffmpeg.exe" 2
           if (-not (Test-Path "$s\interview_audio.mp4") -or -not (Test-Path "$s\interview_transcript.docx")) { throw 'pipeline outputs missing' }
+          # Decode the whole MP4 (playback check); exits non-zero if the file is damaged.
+          & "$app\ffmpeg.exe" -hide_banner -v error -i "$s\interview_audio.mp4" -f null -
+          if ($LASTEXITCODE -ne 0) { throw 'interview_audio.mp4 does not decode' }
           & "$app\ffmpeg.exe" -hide_banner -i "$s\interview_audio.mp4" 2>&1 | Select-String 'Audio:|Video:'
+          $global:LASTEXITCODE = 0
       - name: Uninstall and check clean removal — SDLC-17
         if: always() && env.IR_APP_EXE != ''
         shell: pwsh
