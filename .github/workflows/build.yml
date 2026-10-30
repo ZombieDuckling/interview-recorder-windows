@@ -99,6 +99,11 @@ jobs:
             out/msi/InterviewRecorder-x64.msi
             out/SHA256SUMS.txt
           retention-days: 14
+      - name: Setup wizard screenshots (opens the real setup .exe, accepts terms, cancels)
+        env:
+          IR_SETUP_EXE: ${{ github.workspace }}\out\bundle\InterviewRecorder-Setup-x64.exe
+          IR_SCREENSHOTS: ${{ github.workspace }}\out\screens
+        run: dotnet test tests/Recorder.E2E/Recorder.E2E.csproj -c Release --filter "FullyQualifiedName~SetupWizardScreenshotTests" --logger "trx;LogFileName=wizard.trx" --results-directory out/e2e
       - name: Install (per-user, silent) — SDLC-17
         shell: pwsh
         run: |
