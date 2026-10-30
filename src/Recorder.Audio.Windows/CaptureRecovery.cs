@@ -1,229 +1,158 @@
+using System.Buffers.Binary;
+using System.Globalization;
 using System.Security.Cryptography;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Recorder.Core.Abstractions;
+using Recorder.Core.Diagnostics;
 using Recorder.Core.Formats;
 
 namespace Recorder.Audio.Windows;
 
 public sealed class CaptureRecovery : ICaptureRecovery
 {
-    private const string SchemaVersion = "1.0.0";
-    private const int MinimumChunkFrames = PcmChunkWriter.SampleRate / 10;
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    public Task<CaptureResult?> RecoverAsync(string workingDirectory, CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            try { return Recover(workingDirectory, cancellationToken); }
+            catch (InvalidDataException)
+            {
+                CaptureDiagnostics.Write(workingDirectory, ProcessingLogCode.HashMismatch);
+                throw;
+            }
+        }, cancellationToken);
 
-    public Task<CaptureResult?> RecoverAsync(string workingDirectory, CancellationToken cancellationToken)
+    private static CaptureResult? Recover(string workingDirectory, CancellationToken token)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var root = Path.GetFullPath(workingDirectory);
-        var manifestPath = Path.Combine(root, "session.json");
-        var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))?.AsObject()
-            ?? throw new InvalidDataException("session.json is missing or invalid.");
-
-        if (manifest["schemaVersion"]?.GetValue<string>() != SchemaVersion)
-            throw new NotSupportedException("Unsupported session schema version.");
-
-        var streams = EnsureArray(manifest, "streams");
-        var hashes = EnsureObject(manifest, "hashes");
-        var changed = false;
-        var recovered = false;
-        var resultStreams = new List<StreamFiles>(2);
-
+        var journal = new CaptureManifest(root);
+        var manifest = journal.Read();
+        var plans = new List<RecoveryPlan>();
+        // Validate ALL closed originals before touching any unfinished tail, including the other stream.
         foreach (var role in new[] { StreamRole.Meeting, StreamRole.Microphone })
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var kind = ToKind(role);
+            token.ThrowIfCancellationRequested();
+            var kind = StreamRoleMapping.ToJsonKind(role);
+            var prefix = "capture/" + kind + "/";
             var folder = Path.Combine(root, "capture", kind);
-            if (!Directory.Exists(folder))
-                continue;
-
-            var files = Directory.GetFiles(folder, "*.wav").OrderBy(path => path, StringComparer.Ordinal).ToArray();
-            if (files.Length == 0)
-                continue;
-
-            var streamNode = FindStreamByKind(streams, kind);
-            if (streamNode is null)
+            RejectLink(Path.Combine(root, "capture"));
+            RejectLink(folder);
+            var entries = manifest.Streams.Where(s => s.Kind == CaptureManifest.ToKind(role)).ToArray();
+            if (entries.Length > 1) throw Corrupt(root);
+            var stream = entries.SingleOrDefault() ?? CaptureManifest.NewStream(role, 0, false);
+            if (stream.SampleRate != 48000 || stream.Channels != 1 || stream.BitsPerSample != 16 ||
+                stream.ChunkFrames != 480000 || stream.FirstFrameOffset < 0) throw Corrupt(root);
+            var ordered = stream.Chunks.OrderBy(c => c.File, StringComparer.Ordinal).ToArray();
+            for (var i = 0; i < ordered.Length; i++)
             {
-                streamNode = CreateDefaultStream(kind, role);
-                streams.Add(streamNode);
-                changed = true;
+                token.ThrowIfCancellationRequested();
+                var chunk = ordered[i];
+                var expected = prefix + (i + 1).ToString("D6", CultureInfo.InvariantCulture) + ".wav";
+                if (chunk.File != expected || chunk.Frames is <= 0 or > PcmChunkWriter.ChunkFrames) throw Corrupt(root);
+                if (i < ordered.Length - 1 && chunk.Frames != PcmChunkWriter.ChunkFrames) throw Corrupt(root);
+                var path = Path.Combine(root, chunk.File);
+                RejectLink(path);
+                if (!File.Exists(path)) throw Corrupt(root);
+                using var file = File.OpenRead(path);
+                ValidateHeader(file, closedFrames: chunk.Frames);
+                file.Position = 0;
+                var actual = Convert.ToHexStringLower(SHA256.HashData(file));
+                if (actual != chunk.Sha256 || !manifest.Hashes.TryGetValue(chunk.File, out var hash) || actual != hash)
+                    throw Corrupt(root);
             }
-
-            var chunkArray = EnsureArray(streamNode, "chunks");
-            var trackedByFile = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-            foreach (var chunkNode in chunkArray)
+            var files = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.wav").Order(StringComparer.Ordinal).ToArray() : [];
+            var tracked = ordered.Select(c => Path.Combine(root, c.File)).ToHashSet(StringComparer.Ordinal);
+            if (manifest.Hashes.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal) && !tracked.Contains(Path.Combine(root, key))))
+                throw Corrupt(root);
+            var tails = files.Where(p => !tracked.Contains(p)).ToArray();
+            if (tails.Length > 1) throw Corrupt(root);
+            string? tail = tails.SingleOrDefault();
+            if (tail is not null)
             {
-                if (chunkNode is not JsonObject chunkObject)
-                    continue;
-                var file = chunkObject["file"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(file))
-                    trackedByFile[file] = chunkObject;
+                if (Path.GetFileName(tail) != (ordered.Length + 1).ToString("D6", CultureInfo.InvariantCulture) + ".wav" ||
+                    (ordered.Length > 0 && ordered[^1].Frames != PcmChunkWriter.ChunkFrames)) throw Corrupt(root);
+                RejectLink(tail);
+                using var file = File.OpenRead(tail);
+                if (file.Length >= PcmChunkWriter.HeaderSize) ValidateHeader(file, closedFrames: null);
             }
-
-            foreach (var tracked in trackedByFile)
-            {
-                var fullPath = Path.Combine(root, tracked.Key.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(fullPath))
-                    continue;
-
-                var expectedHash = hashes[tracked.Key]?.GetValue<string>() ?? tracked.Value["sha256"]?.GetValue<string>();
-                if (string.IsNullOrWhiteSpace(expectedHash))
-                    continue;
-
-                using var stream = File.OpenRead(fullPath);
-                var actualHash = Convert.ToHexStringLower(SHA256.HashData(stream));
-                if (!string.Equals(actualHash, expectedHash, StringComparison.Ordinal))
-                    throw new InvalidDataException($"Chunk hash mismatch: {tracked.Key}");
-            }
-
-            foreach (var file in files)
-            {
-                var relative = ToRelativeCapturePath(root, file);
-                if (trackedByFile.ContainsKey(relative))
-                    continue;
-
-                var repaired = RepairRecoverableChunk(file);
-                if (repaired is null)
-                {
-                    File.Delete(file);
-                    changed = true;
-                    continue;
-                }
-
-                chunkArray.Add(new JsonObject
-                {
-                    ["file"] = relative,
-                    ["frames"] = repaired.Frames,
-                    ["sha256"] = repaired.Sha256,
-                    ["recovered"] = true,
-                });
-                hashes[relative] = repaired.Sha256;
-                trackedByFile[relative] = new JsonObject();
-                changed = true;
-                recovered = true;
-            }
-
-            var ordered = chunkArray
-                .OfType<JsonObject>()
-                .OrderBy(node => node["file"]?.GetValue<string>(), StringComparer.Ordinal)
-                .ToArray();
-
-            var rebuilt = new JsonArray();
-            foreach (var node in ordered)
-                rebuilt.Add(node.DeepClone());
-            streamNode["chunks"] = rebuilt;
-
-            long totalFrames = 0;
-            var chunkPaths = new List<string>(ordered.Length);
-            foreach (var chunk in ordered)
-            {
-                totalFrames += chunk["frames"]?.GetValue<long>() ?? 0;
-                var chunkFile = chunk["file"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(chunkFile))
-                    chunkPaths.Add(chunkFile);
-            }
-
-            if (chunkPaths.Count == 0)
-                continue;
-
-            var startOffsetFrames = streamNode["firstFrameOffset"]?.GetValue<long>() ?? 0;
-            var duration = TimeSpan.FromSeconds(totalFrames / (double)PcmChunkWriter.SampleRate);
-            resultStreams.Add(new StreamFiles(
-                role,
-                Path.Combine(root, "capture", kind),
-                chunkPaths,
-                PcmChunkWriter.SampleRate,
-                1,
-                duration,
-                TimeSpan.FromSeconds(startOffsetFrames / (double)PcmChunkWriter.SampleRate),
-                streamNode["source"]?.GetValue<string>() == "wasapi-process-loopback"));
+            plans.Add(new RecoveryPlan(stream, folder, tail, entries.Length == 0));
         }
 
-        if (resultStreams.Count == 0)
+        var changed = false;
+        foreach (var plan in plans)
         {
-            if (changed)
-                File.WriteAllText(manifestPath, manifest.ToJsonString(JsonOptions));
-            return Task.FromResult<CaptureResult?>(null);
+            token.ThrowIfCancellationRequested();
+            if (plan.Tail is null) continue;
+            var info = new FileInfo(plan.Tail);
+            var frames = Math.Max(0, (info.Length - PcmChunkWriter.HeaderSize) / 2);
+            if (frames < 4800)
+            {
+                File.Delete(plan.Tail);
+                changed = true;
+                manifest.Recording.Recovered = true;
+                journal.Save(manifest);
+                CaptureDiagnostics.Write(root, ProcessingLogCode.ChunkRecovered, new ProcessingLogValue("droppedFrames", frames));
+                continue;
+            }
+            using var file = new FileStream(plan.Tail, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            file.SetLength(PcmChunkWriter.HeaderSize + frames * 2);
+            PcmChunkWriter.WriteHeader(file, checked((int)(frames * 2)));
+            file.Flush(flushToDisk: true);
+            file.Position = 0;
+            var hash = Convert.ToHexStringLower(SHA256.HashData(file));
+            var relative = Path.GetRelativePath(root, plan.Tail).Replace(Path.DirectorySeparatorChar, '/');
+            plan.Stream.Chunks.Add(new CaptureChunkInfo { File = relative, Frames = (int)frames, Sha256 = hash, Recovered = true });
+            manifest.Hashes.Add(relative, hash);
+            if (plan.NewStream) manifest.Streams.Add(plan.Stream);
+            changed = true;
+            manifest.Recording.Recovered = true;
+            // Persist each acknowledged tail independently; retry is safe after an interrupted recovery.
+            journal.Save(manifest);
+            CaptureDiagnostics.Write(root, ProcessingLogCode.ChunkRecovered, new("file", new SessionRelativePath(relative)), new("frames", frames));
         }
-
+        var streams = plans.Where(p => p.Stream.Chunks.Count > 0).Select(p => new StreamFiles(
+            p.Stream.Kind == StreamJsonKind.Meeting ? StreamRole.Meeting : StreamRole.Microphone,
+            p.Folder, p.Stream.Chunks.OrderBy(c => c.File, StringComparer.Ordinal).Select(c => Path.Combine(root, c.File)).ToArray(),
+            48000, 1, TimeSpan.FromSeconds(p.Stream.Chunks.Sum(c => (long)c.Frames) / 48000d),
+            TimeSpan.FromSeconds(p.Stream.FirstFrameOffset / 48000d), p.Stream.Source == StreamCaptureSource.WasapiProcessLoopback)).ToArray();
+        if (streams.Length == 0) return null;
+        var duration = streams.Max(s => s.StartOffset + s.Duration);
         if (changed)
-            File.WriteAllText(manifestPath, manifest.ToJsonString(JsonOptions));
-
-        var end = resultStreams.Max(stream => stream.StartOffset + stream.Duration);
-        return Task.FromResult<CaptureResult?>(new CaptureResult(resultStreams, end, Complete: !recovered));
-    }
-
-    private static ClosedChunk? RepairRecoverableChunk(string path)
-    {
-        var info = new FileInfo(path);
-        if (info.Length <= PcmChunkWriter.HeaderSize)
-            return null;
-
-        var dataBytes = info.Length - PcmChunkWriter.HeaderSize;
-        dataBytes -= dataBytes % 2;
-        var frames = dataBytes / 2;
-        if (frames < MinimumChunkFrames)
-            return null;
-
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        if (stream.Length != PcmChunkWriter.HeaderSize + dataBytes)
-            stream.SetLength(PcmChunkWriter.HeaderSize + dataBytes);
-
-        PcmChunkWriter.WriteHeader(stream, checked((int)dataBytes));
-        stream.Flush(flushToDisk: true);
-        stream.Position = 0;
-        var hash = Convert.ToHexStringLower(SHA256.HashData(stream));
-        return new ClosedChunk(File: string.Empty, Frames: frames, Sha256: hash, Recovered: true);
-    }
-
-    private static string ToKind(StreamRole role) => role == StreamRole.Meeting ? "meeting" : "mic";
-
-    private static string ToRelativeCapturePath(string root, string absolutePath)
-    {
-        var relative = Path.GetRelativePath(root, absolutePath);
-        return relative.Replace(Path.DirectorySeparatorChar, '/');
-    }
-
-    private static JsonObject? FindStreamByKind(JsonArray streams, string kind)
-    {
-        foreach (var stream in streams)
         {
-            if (stream is JsonObject streamObject && streamObject["kind"]?.GetValue<string>() == kind)
-                return streamObject;
+            manifest.Recording.DurationSeconds = Math.Round(duration.TotalSeconds, 3);
+            journal.Save(manifest);
         }
-
-        return null;
+        return new CaptureResult(streams, duration, Complete: manifest.Recording.Recovered != true &&
+            !manifest.Streams.Any(s => s.Chunks.Any(c => c.Recovered == true)));
     }
 
-    private static JsonObject CreateDefaultStream(string kind, StreamRole role) =>
-        new()
-        {
-            ["kind"] = kind,
-            ["source"] = role == StreamRole.Meeting ? "wasapi-loopback" : "wasapi-capture",
-            ["deviceType"] = "unknown",
-            ["sampleRate"] = PcmChunkWriter.SampleRate,
-            ["channels"] = 1,
-            ["bitsPerSample"] = 16,
-            ["chunkFrames"] = PcmChunkWriter.ChunkFrames,
-            ["firstFrameOffset"] = 0,
-            ["chunks"] = new JsonArray(),
-        };
-
-    private static JsonObject EnsureObject(JsonObject parent, string name)
+    private static void RejectLink(string path)
     {
-        if (parent[name] is JsonObject obj)
-            return obj;
-        obj = [];
-        parent[name] = obj;
-        return obj;
+        if ((Directory.Exists(path) || File.Exists(path)) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Capture paths cannot be links.");
     }
 
-    private static JsonArray EnsureArray(JsonObject parent, string name)
+    private static InvalidDataException Corrupt(string root)
     {
-        if (parent[name] is JsonArray array)
-            return array;
-        array = [];
-        parent[name] = array;
-        return array;
+        CaptureDiagnostics.Write(root, ProcessingLogCode.HashMismatch);
+        return new InvalidDataException("Original capture files or metadata are missing or corrupt. They have not been repaired.");
     }
+
+    private static void ValidateHeader(Stream file, int? closedFrames)
+    {
+        Span<byte> header = stackalloc byte[PcmChunkWriter.HeaderSize];
+        if (file.Length < header.Length || file.Length > header.Length + PcmChunkWriter.ChunkFrames * 2 + 1)
+            throw new InvalidDataException("Invalid capture chunk size.");
+        file.ReadExactly(header);
+        using var expected = new MemoryStream();
+        PcmChunkWriter.WriteHeader(expected, 0);
+        var reference = expected.ToArray();
+        // Only RIFF/data lengths may be incomplete after a crash.
+        if (!header[..4].SequenceEqual(reference.AsSpan(0, 4)) || !header[8..40].SequenceEqual(reference.AsSpan(8, 32)))
+            throw new InvalidDataException("Capture is not canonical 48 kHz mono PCM16 WAV.");
+        if (closedFrames is int count && (file.Length != 44 + count * 2 ||
+            BinaryPrimitives.ReadInt32LittleEndian(header[4..]) != 36 + count * 2 ||
+            BinaryPrimitives.ReadInt32LittleEndian(header[40..]) != count * 2))
+            throw new InvalidDataException("A closed capture chunk has invalid lengths.");
+    }
+
+    private sealed record RecoveryPlan(SessionStreamInfo Stream, string Folder, string? Tail, bool NewStream);
 }
