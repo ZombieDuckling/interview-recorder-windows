@@ -5,7 +5,7 @@ namespace Recorder.Transcription;
 internal sealed record WindowSegment(double Start, double End, string Text);
 internal sealed record StitchedSegment(int Index, TimeSpan Start, TimeSpan End, SpeakerLabel Speaker, string Text, StreamRole Role)
 {
-    public bool SpeakerVerified => false;
+    public bool SpeakerVerified { get; init; }
 }
 
 /// <summary>Deduplicates time already emitted by the same stream; never removes the other stream's speech.</summary>
