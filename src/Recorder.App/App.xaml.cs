@@ -2,8 +2,6 @@
 using Recorder.App.Helpers;
 using Recorder.App.Services;
 using Recorder.App.ViewModels;
-using Recorder.Audio.Windows;
-using Recorder.Security;
 
 namespace Recorder.App;
 
@@ -14,13 +12,7 @@ public partial class App : Application
     private void App_OnStartup(object sender, StartupEventArgs e)
     {
         var settings = new UserSettingsStore();
-        ISessionWorkflow workflow = new UnavailableSessionWorkflow();
-        var services = new AppServices(
-            settings,
-            workflow,
-            new WasapiAudioCapture(),
-            new RetentionService(),
-            new FileProtector());
+        var services = Composition.AppComposition.Build(settings);
         AppServices.Initialize(services);
         MainViewModel = new MainViewModel(services);
         HighContrastTheme.ApplyIfNeeded(this);
@@ -40,5 +32,6 @@ public partial class App : Application
 
     private void App_OnExit(object sender, ExitEventArgs e)
     {
+        (AppServices.Instance?.Workflow as IDisposable)?.Dispose();
     }
 }
