@@ -1,0 +1,72 @@
+<UserControl x:Class="Recorder.App.Views.TranscriptEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:views="clr-namespace:Recorder.App.Views"
+             mc:Ignorable="d">
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <StackPanel Orientation="Horizontal" Grid.Row="0">
+      <Button Content="Play / Pause"
+              Command="{Binding TogglePlayPauseCommand}"
+              AutomationProperties.AutomationId="TranscriptPlayPauseButton" />
+      <Button Margin="8,0,0,0"
+              Content="Save"
+              Command="{Binding SaveCommand}"
+              AutomationProperties.AutomationId="TranscriptSaveButton" />
+      <Button Margin="8,0,0,0"
+              Content="Export DOCX"
+              Command="{Binding ExportDocxCommand}"
+              AutomationProperties.AutomationId="TranscriptExportDocxButton" />
+    </StackPanel>
+
+    <ListBox Grid.Row="1"
+             Margin="0,12,0,12"
+             ItemsSource="{Binding Segments}"
+             SelectedItem="{Binding SelectedSegment, Mode=TwoWay}"
+             AutomationProperties.AutomationId="TranscriptSegmentList">
+      <ListBox.InputBindings>
+        <KeyBinding Key="Up" Command="{Binding SelectPreviousSegmentCommand}" />
+        <KeyBinding Key="Down" Command="{Binding SelectNextSegmentCommand}" />
+      </ListBox.InputBindings>
+      <ListBox.ItemTemplate>
+        <DataTemplate>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="80" />
+              <ColumnDefinition Width="140" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="{Binding StartDisplay}" AutomationProperties.AutomationId="TranscriptSegmentTime" />
+            <StackPanel Grid.Column="1">
+              <TextBox Text="{Binding Speaker, UpdateSourceTrigger=PropertyChanged}"
+                       AutomationProperties.AutomationId="TranscriptSegmentSpeaker" />
+              <CheckBox Content="Verified"
+                        IsChecked="{Binding SpeakerVerified}"
+                        AutomationProperties.AutomationId="TranscriptSegmentSpeakerVerified" />
+            </StackPanel>
+            <TextBox Grid.Column="2"
+                     Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"
+                     AutomationProperties.AutomationId="TranscriptSegmentText" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <views:ExportSettingsView Grid.Row="2"
+                              DataContext="{Binding ExportSettings}"
+                              AutomationProperties.AutomationId="TranscriptExportSettingsPanel" />
+
+    <TextBlock Grid.Row="3"
+               Margin="0,8,0,0"
+               Text="Select a segment to seek audio. Use Up/Down to move between segments."
+               AutomationProperties.AutomationId="TranscriptEditorHelpText" />
+  </Grid>
+</UserControl>

@@ -1,0 +1,25 @@
+<UserControl x:Class="Recorder.App.Views.ExportSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+  <StackPanel Margin="12">
+    <TextBlock Text="Export settings" FontSize="16" FontWeight="SemiBold" AutomationProperties.AutomationId="ExportSettingsTitle" />
+    <TextBlock Margin="0,12,0,4" Text="Study code (optional)" />
+    <TextBox Text="{Binding StudyCode, UpdateSourceTrigger=PropertyChanged}"
+             AutomationProperties.AutomationId="ExportStudyCodeTextBox" />
+    <CheckBox Margin="0,12,0,0"
+              Content="Include reviewer sign-off in DOCX"
+              IsChecked="{Binding IncludeReview}"
+              AutomationProperties.AutomationId="ExportIncludeReviewCheckBox" />
+    <TextBlock Margin="0,8,0,4" Text="Reviewer initials (1-8 letters)" />
+    <TextBox Text="{Binding ReviewerInitials, UpdateSourceTrigger=PropertyChanged}"
+             IsEnabled="{Binding IncludeReview}"
+             AutomationProperties.AutomationId="ExportReviewerInitialsTextBox" />
+    <CheckBox Margin="0,12,0,0"
+              Content="Save re-export under exports/ with timestamp"
+              IsChecked="{Binding UseReExportFolder}"
+              AutomationProperties.AutomationId="ExportUseReExportFolderCheckBox" />
+  </StackPanel>
+</UserControl>

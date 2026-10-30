@@ -40,12 +40,23 @@ public interface ITranscriber
     Task<Transcript> TranscribeAsync(TranscriptionRequest request, IProgress<TranscriptionProgress>? progress, CancellationToken cancellationToken);
 }
 
+public sealed record DocxSegment(
+    TimeSpan Start,
+    string Speaker,
+    bool SpeakerVerified,
+    string Text);
+
 public sealed record DocxExportRequest(
     string SessionCode,
     DateTimeOffset RecordedAt,
-    Transcript Transcript,
+    TimeSpan Duration,
+    string? StudyCode,
+    string EngineVersion,
+    string ModelName,
+    IReadOnlyList<DocxSegment> Segments,
     string OutputPath,
-    string? ReviewerName = null,
+    DateTimeOffset ExportedAt,
+    string? ReviewerInitials = null,
     DateTimeOffset? ReviewedAt = null);
 
 /// <summary>Implemented by Recorder.Export (win-export): Open XML SDK, streamed, no audio embedded.</summary>
