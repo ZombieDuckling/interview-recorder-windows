@@ -1,7 +1,6 @@
 ﻿using System.Windows;
 using Recorder.App.Helpers;
 using Recorder.App.Services;
-using Recorder.App.Services.Stubs;
 using Recorder.App.ViewModels;
 
 namespace Recorder.App;
