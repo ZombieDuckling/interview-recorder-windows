@@ -3,95 +3,94 @@ using NAudio.Wave;
 
 namespace Recorder.Audio.Windows;
 
-internal static class PcmFrameConverter
+// Stateful rational-phase linear resampler: packet boundaries cannot accumulate rounding drift.
+// Holds one mono input sample, never the recording. A fresh instance is used after a format/gap change.
+internal sealed class PcmFrameConverter
 {
-    internal static short[] ToMono16Pcm48k(ReadOnlySpan<byte> input, WaveFormat source)
-    {
-        var channels = Math.Max(1, source.Channels);
-        var sourceFrames = source.BlockAlign == 0 ? 0 : input.Length / source.BlockAlign;
-        if (sourceFrames <= 0)
-            return [];
+    private readonly WaveFormat source;
+    private readonly bool floatingPoint;
+    private double previous;
+    private bool completed;
 
-        var mono = new float[sourceFrames];
-        DecodeToMono(source, input, mono, channels);
-        return ResampleTo48kAndConvert(source.SampleRate, mono);
+    internal PcmFrameConverter(WaveFormat format)
+    {
+        source = format is WaveFormatExtensible extended ? extended.ToStandardWaveFormat() : format;
+        floatingPoint = source.Encoding == WaveFormatEncoding.IeeeFloat;
+        if (source.SampleRate is < 8000 or > 384000 || source.Channels is < 1 or > 32 ||
+            source.BlockAlign != source.Channels * source.BitsPerSample / 8 ||
+            (!floatingPoint && source.Encoding != WaveFormatEncoding.Pcm) ||
+            (floatingPoint ? source.BitsPerSample is not (32 or 64) : source.BitsPerSample is not (8 or 16 or 24 or 32)))
+            throw new NotSupportedException("The audio device must provide PCM or IEEE float audio.");
     }
 
-    private static void DecodeToMono(WaveFormat source, ReadOnlySpan<byte> input, float[] mono, int channels)
+    internal long InputFrames { get; private set; }
+    internal long OutputFrames { get; private set; }
+
+    internal short[] Convert(ReadOnlySpan<byte> input)
     {
-        if (source.Encoding == WaveFormatEncoding.Pcm && source.BitsPerSample == 16)
+        if (completed) throw new InvalidOperationException("The converter has been flushed.");
+        if (input.Length % source.BlockAlign != 0) throw new InvalidDataException("Incomplete audio input frame.");
+        var count = input.Length / source.BlockAlign;
+        if (count > source.SampleRate) throw new InvalidDataException("Audio packets must be at most one second.");
+        if (count == 0) return [];
+        var output = new short[checked((int)Math.Ceiling((count + 1d) * 48000 / source.SampleRate))];
+        var written = 0;
+        for (var frame = 0; frame < count; frame++)
         {
-            for (var frame = 0; frame < mono.Length; frame++)
+            var sample = Decode(input.Slice(frame * source.BlockAlign, source.BlockAlign));
+            var index = InputFrames++;
+            while (OutputFrames * source.SampleRate <= index * 48000)
             {
-                var sum = 0f;
-                var frameOffset = frame * source.BlockAlign;
-                for (var channel = 0; channel < channels; channel++)
-                {
-                    var sampleOffset = frameOffset + (channel * 2);
-                    short value = BinaryPrimitives.ReadInt16LittleEndian(input.Slice(sampleOffset, 2));
-                    sum += value / 32768f;
-                }
-
-                mono[frame] = sum / channels;
+                var fraction = (OutputFrames * source.SampleRate - (index - 1) * 48000) / 48000d;
+                output[written++] = ToPcm(index == 0 ? sample : previous + (sample - previous) * fraction);
+                OutputFrames++;
             }
-
-            return;
+            previous = sample;
         }
-
-        if (source.Encoding == WaveFormatEncoding.IeeeFloat && source.BitsPerSample == 32)
-        {
-            for (var frame = 0; frame < mono.Length; frame++)
-            {
-                var sum = 0f;
-                var frameOffset = frame * source.BlockAlign;
-                for (var channel = 0; channel < channels; channel++)
-                {
-                    var sampleOffset = frameOffset + (channel * 4);
-                    var bits = BinaryPrimitives.ReadInt32LittleEndian(input.Slice(sampleOffset, 4));
-                    sum += BitConverter.Int32BitsToSingle(bits);
-                }
-
-                mono[frame] = sum / channels;
-            }
-
-            return;
-        }
-
-        throw new NotSupportedException($"Unsupported input format: {source.Encoding} {source.BitsPerSample}-bit.");
+        return output[..written];
     }
 
-    private static short[] ResampleTo48kAndConvert(int sourceRate, float[] mono)
+    internal short[] Flush()
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceRate);
-
-        if (sourceRate == PcmChunkWriter.SampleRate)
-            return mono.Select(FloatToPcm16).ToArray();
-
-        var outputFrames = (int)Math.Round(mono.Length * (double)PcmChunkWriter.SampleRate / sourceRate);
-        if (outputFrames <= 0)
-            return [];
-
-        var output = new short[outputFrames];
-        for (var i = 0; i < outputFrames; i++)
-        {
-            var srcPos = i * (double)(mono.Length - 1) / Math.Max(1, outputFrames - 1);
-            var left = (int)Math.Floor(srcPos);
-            var right = Math.Min(left + 1, mono.Length - 1);
-            var frac = (float)(srcPos - left);
-            var sample = (mono[left] * (1f - frac)) + (mono[right] * frac);
-            output[i] = FloatToPcm16(sample);
-        }
-
+        if (completed) return [];
+        completed = true;
+        var total = InputFrames * 48000 / source.SampleRate;
+        var output = new short[checked((int)Math.Max(0, total - OutputFrames))];
+        Array.Fill(output, ToPcm(previous));
+        OutputFrames += output.Length;
         return output;
     }
 
-    private static short FloatToPcm16(float value)
+    internal static short[] ToMono16Pcm48k(ReadOnlySpan<byte> input, WaveFormat source)
     {
-        value = Math.Clamp(value, -1f, 1f);
-        if (value <= -1f)
-            return short.MinValue;
-        if (value >= 1f)
-            return short.MaxValue;
-        return (short)Math.Round(value * short.MaxValue);
+        var converter = new PcmFrameConverter(source);
+        var output = converter.Convert(input);
+        return [.. output, .. converter.Flush()];
     }
+
+    private double Decode(ReadOnlySpan<byte> frame)
+    {
+        double sum = 0;
+        var bytes = source.BitsPerSample / 8;
+        for (var channel = 0; channel < source.Channels; channel++)
+        {
+            var sample = frame.Slice(channel * bytes, bytes);
+            double value;
+            if (floatingPoint)
+                value = bytes == 4 ? BinaryPrimitives.ReadSingleLittleEndian(sample) : BinaryPrimitives.ReadDoubleLittleEndian(sample);
+            else
+                value = bytes switch
+                {
+                    1 => (sample[0] - 128) / 128d,
+                    2 => BinaryPrimitives.ReadInt16LittleEndian(sample) / 32768d,
+                    3 => ((sample[0] | (sample[1] << 8) | (sample[2] << 16)) << 8 >> 8) / 8388608d,
+                    4 => BinaryPrimitives.ReadInt32LittleEndian(sample) / 2147483648d,
+                    _ => throw new InvalidDataException("Invalid PCM sample width."),
+                };
+            sum += double.IsFinite(value) ? value : 0;
+        }
+        return sum / source.Channels;
+    }
+
+    private static short ToPcm(double value) => (short)Math.Clamp(Math.Round(value * 32768), short.MinValue, short.MaxValue);
 }

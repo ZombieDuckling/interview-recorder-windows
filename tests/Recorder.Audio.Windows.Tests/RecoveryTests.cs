@@ -8,6 +8,73 @@ namespace Recorder.Audio.Windows.Tests;
 public sealed class RecoveryTests
 {
     [Fact]
+    public async Task MissingClosedChunkIsCorruptionNotARecoverableGap()
+    {
+        using var folder = new TestFolder();
+        var journal = new CaptureManifest(folder.Path);
+        journal.RegisterStream(StreamRole.Meeting, 0, false);
+        using (var writer = new PcmChunkWriter(folder.Path, StreamRole.Meeting, c => journal.CloseChunk(StreamRole.Meeting, c)))
+        {
+            writer.WriteSilence(480000);
+            writer.WriteSilence(4800);
+        }
+        File.Delete(System.IO.Path.Combine(folder.Path, "capture/meeting/000001.wav"));
+        var tail = File.ReadAllBytes(System.IO.Path.Combine(folder.Path, "capture/meeting/000002.wav"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => new CaptureRecovery().RecoverAsync(folder.Path, CancellationToken.None));
+        Assert.Equal(tail, File.ReadAllBytes(System.IO.Path.Combine(folder.Path, "capture/meeting/000002.wav")));
+    }
+
+    [Fact]
+    public async Task RefusesMultipleUntrackedChunksWithoutModifyingEither()
+    {
+        using var folder = new TestFolder();
+        using (var writer = new PcmChunkWriter(folder.Path, StreamRole.Meeting, _ => { }))
+            writer.WriteSilence(484800);
+        var path = System.IO.Path.Combine(folder.Path, "capture/meeting/000002.wav");
+        var before = File.ReadAllBytes(path);
+        await Assert.ThrowsAsync<InvalidDataException>(() => new CaptureRecovery().RecoverAsync(folder.Path, CancellationToken.None));
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public async Task RefusesNonPcmTailWithoutRewritingIt()
+    {
+        using var folder = new TestFolder();
+        using (var writer = new PcmChunkWriter(folder.Path, StreamRole.Meeting, _ => { })) writer.WriteSilence(4800);
+        var path = System.IO.Path.Combine(folder.Path, "capture/meeting/000001.wav");
+        var bytes = File.ReadAllBytes(path);
+        bytes[20] = 3;
+        File.WriteAllBytes(path, bytes);
+        await Assert.ThrowsAsync<InvalidDataException>(() => new CaptureRecovery().RecoverAsync(folder.Path, CancellationToken.None));
+        Assert.Equal(bytes, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public async Task ReturnedPathsAreAbsoluteAndRecoveredStatusSurvivesReopen()
+    {
+        using var folder = new TestFolder();
+        using (var writer = new PcmChunkWriter(folder.Path, StreamRole.Meeting, _ => { })) writer.WriteSilence(4800);
+        await new CaptureRecovery().RecoverAsync(folder.Path, CancellationToken.None);
+        var reopened = await new CaptureRecovery().RecoverAsync(folder.Path, CancellationToken.None);
+        Assert.False(reopened!.Complete);
+        Assert.All(Assert.Single(reopened.Streams).ChunkPaths, path => Assert.True(System.IO.Path.IsPathFullyQualified(path)));
+        Assert.Equal("Recording", folder.Manifest["state"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void JournalRefusesUnknownMajorWithoutChangingAnything()
+    {
+        using var folder = new TestFolder();
+        var manifest = folder.Manifest;
+        manifest["schemaVersion"] = "2.0.0";
+        var path = System.IO.Path.Combine(folder.Path, "session.json");
+        File.WriteAllText(path, manifest.ToJsonString());
+        var before = File.ReadAllBytes(path);
+        Assert.ThrowsAny<NotSupportedException>(() => new CaptureManifest(folder.Path).Begin(DateTimeOffset.UtcNow));
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
     public async Task RepairsOnlyUnfinishedTailAndRecordsHash()
     {
         using var folder = new TestFolder();

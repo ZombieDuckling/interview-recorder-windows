@@ -1,6 +1,3 @@
-#pragma warning disable CS0618
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Runtime.Versioning;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -9,386 +6,186 @@ using Recorder.Core.Formats;
 
 namespace Recorder.Audio.Windows;
 
-/// <summary>
-/// Capture implementation for Windows WASAPI loopback/mic recording.
-/// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WasapiAudioCapture : IAudioCapture
 {
-    // Process loopback activation was added in Windows Server 2022 / Windows 11 era APIs (build 20348+).
-    // Docs: ActivateAudioInterfaceAsync + AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK.
-    private const int ProcessLoopbackMinBuild = 20348;
-
-    public bool IsProcessLoopbackSupported => OperatingSystem.IsWindows() && Environment.OSVersion.Version.Build >= ProcessLoopbackMinBuild;
+    // Microsoft explicitly requires Windows build 20348+ for process-tree loopback:
+    // https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/
+    // Ordinary Windows 10 builds (e.g. 19045) use endpoint loopback instead.
+    public bool IsProcessLoopbackSupported => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 20348);
 
     public IReadOnlyList<AudioDeviceInfo> ListDevices(AudioDeviceKind kind)
     {
-        if (!OperatingSystem.IsWindows())
-            return [];
-
+        if (!OperatingSystem.IsWindows()) return [];
         using var enumerator = new MMDeviceEnumerator();
-        var dataFlow = kind == AudioDeviceKind.Render ? DataFlow.Render : DataFlow.Capture;
-        var role = kind == AudioDeviceKind.Render ? Role.Multimedia : Role.Communications;
-        var defaultDevice = TryGetDefaultDevice(enumerator, dataFlow, role)?.ID;
-
+        using var defaultDevice = TryDefault(enumerator, kind);
         var devices = new List<AudioDeviceInfo>();
-        foreach (var device in enumerator.EnumerateAudioEndPoints(dataFlow, DeviceState.Active))
+        foreach (var device in enumerator.EnumerateAudioEndPoints(Flow(kind), DeviceState.Active))
         {
-            try
+            using (device)
             {
-                var format = device.AudioClient.MixFormat;
-                devices.Add(new AudioDeviceInfo(
-                    device.ID,
-                    device.FriendlyName,
-                    kind,
-                    string.Equals(device.ID, defaultDevice, StringComparison.Ordinal),
-                    format.SampleRate,
-                    format.Channels));
-            }
-            finally
-            {
-                device.Dispose();
+                try
+                {
+                    using var client = device.CreateAudioClient();
+                    var format = client.MixFormat;
+                    devices.Add(new AudioDeviceInfo(device.ID, device.FriendlyName, kind, device.ID == defaultDevice?.ID,
+                        format.SampleRate, format.Channels));
+                }
+                catch (System.Runtime.InteropServices.COMException) { /* It was removed during enumeration. */ }
             }
         }
-
         return devices;
     }
 
     public Task<ICaptureSession> StartAsync(CaptureRequest request, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("WASAPI capture is only available on Windows.");
-
-        Directory.CreateDirectory(request.WorkingDirectory);
-        var startedAt = DateTimeOffset.UtcNow;
-        var manifest = new CaptureManifest(request.WorkingDirectory);
-        manifest.Begin(startedAt);
-
-        using var enumerator = new MMDeviceEnumerator();
-        var meetingDevice = ResolveMeetingDevice(enumerator, request.MeetingEndpointId);
-        var micDevice = ResolveMicDevice(enumerator, request.MicrophoneEndpointId);
-
-        var session = new WasapiCaptureSession(request.WorkingDirectory, manifest, meetingDevice, micDevice);
-        session.Start();
-        return Task.FromResult<ICaptureSession>(session);
-    }
-
-    private static MMDevice ResolveMeetingDevice(MMDeviceEnumerator enumerator, string? endpointId)
-    {
-        if (!string.IsNullOrWhiteSpace(endpointId))
-            return enumerator.GetDevice(endpointId);
-        return enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-    }
-
-    private static MMDevice ResolveMicDevice(MMDeviceEnumerator enumerator, string? endpointId)
-    {
-        if (!string.IsNullOrWhiteSpace(endpointId))
-            return enumerator.GetDevice(endpointId);
-
-        try
+        ArgumentNullException.ThrowIfNull(request);
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("WASAPI capture is only available on Windows.");
+        // Construct native clients off the WPF context; NAudio must never marshal stop notifications to a blocked UI.
+        return Task.Run<ICaptureSession>(async () =>
         {
-            return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
-        }
-        catch
-        {
-            return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
-        }
-    }
-
-    private static MMDevice? TryGetDefaultDevice(MMDeviceEnumerator enumerator, DataFlow dataFlow, Role role)
-    {
-        try
-        {
-            return enumerator.GetDefaultAudioEndpoint(dataFlow, role);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private sealed class WasapiCaptureSession : ICaptureSession
-    {
-        private readonly Stopwatch clock = Stopwatch.StartNew();
-        private readonly StreamCaptureWorker meetingWorker;
-        private readonly StreamCaptureWorker micWorker;
-        private readonly MMDevice meetingDevice;
-        private readonly MMDevice micDevice;
-        private readonly WasapiLoopbackCapture meetingCapture;
-        private readonly WasapiCapture micCapture;
-        private int stopped;
-        private bool disposed;
-
-        public event EventHandler<LevelSample>? LevelsAvailable;
-        public event EventHandler<CaptureFault>? FaultRaised;
-
-        public TimeSpan Elapsed => clock.Elapsed;
-
-        internal WasapiCaptureSession(
-            string workingDirectory,
-            CaptureManifest manifest,
-            MMDevice meetingDevice,
-            MMDevice micDevice)
-        {
-            this.meetingDevice = meetingDevice;
-            this.micDevice = micDevice;
-
-            meetingWorker = new StreamCaptureWorker(workingDirectory, StreamRole.Meeting, manifest, clock, RaiseLevel, RaiseFault);
-            micWorker = new StreamCaptureWorker(workingDirectory, StreamRole.Microphone, manifest, clock, RaiseLevel, RaiseFault);
-
-            meetingCapture = new WasapiLoopbackCapture(meetingDevice);
-            micCapture = new WasapiCapture(micDevice);
-
-            meetingCapture.DataAvailable += (_, args) => meetingWorker.OnData(args.Buffer, args.BytesRecorded, meetingCapture.WaveFormat);
-            meetingCapture.RecordingStopped += (_, args) =>
-            {
-                if (args.Exception is not null)
-                    RaiseFault(StreamRole.Meeting, CaptureFaultKind.Other, false, args.Exception.HResult);
-            };
-
-            micCapture.DataAvailable += (_, args) => micWorker.OnData(args.Buffer, args.BytesRecorded, micCapture.WaveFormat);
-            micCapture.RecordingStopped += (_, args) =>
-            {
-                if (args.Exception is not null)
-                    RaiseFault(StreamRole.Microphone, CaptureFaultKind.Other, false, args.Exception.HResult);
-            };
-        }
-
-        internal void Start()
-        {
-            meetingCapture.StartRecording();
-            micCapture.StartRecording();
-        }
-
-        public async Task<CaptureResult> StopAsync(CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Interlocked.Exchange(ref stopped, 1) != 0)
-                throw new InvalidOperationException("Capture already stopped.");
-
-            meetingCapture.StopRecording();
-            micCapture.StopRecording();
-
-            var meetingStream = await meetingWorker.StopAsync(cancellationToken).ConfigureAwait(false);
-            var micStream = await micWorker.StopAsync(cancellationToken).ConfigureAwait(false);
-            var streams = new List<StreamFiles>(2);
-            if (meetingStream is not null)
-                streams.Add(meetingStream);
-            if (micStream is not null)
-                streams.Add(micStream);
-
-            var duration = streams.Count == 0 ? TimeSpan.Zero : streams.Max(stream => stream.StartOffset + stream.Duration);
-            return new CaptureResult(streams, duration, Complete: true);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (disposed)
-                return;
-            disposed = true;
-
-            if (Volatile.Read(ref stopped) == 0)
-            {
-                try
-                {
-                    await StopAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Best effort dispose path.
-                }
-            }
-
-            meetingCapture.Dispose();
-            micCapture.Dispose();
-            meetingWorker.Dispose();
-            micWorker.Dispose();
-            meetingDevice.Dispose();
-            micDevice.Dispose();
-        }
-
-        private void RaiseLevel(LevelSample sample) => LevelsAvailable?.Invoke(this, sample);
-
-        private void RaiseFault(StreamRole role, CaptureFaultKind kind, bool recovered, int diagnosticCode) =>
-            FaultRaised?.Invoke(this, new CaptureFault(role, kind, recovered, diagnosticCode));
-    }
-
-    private sealed class StreamCaptureWorker : IDisposable
-    {
-        private readonly StreamRole role;
-        private readonly CaptureManifest manifest;
-        private readonly Stopwatch clock;
-        private readonly Action<LevelSample> publishLevels;
-        private readonly Action<StreamRole, CaptureFaultKind, bool, int> publishFault;
-        private readonly PcmChunkWriter writer;
-        private readonly string directory;
-        private readonly BlockingCollection<short[]> queue = new(256);
-        private readonly Task writerTask;
-        private readonly object gate = new();
-        private long firstFrameOffset = -1;
-        private bool registered;
-        private DateTime lastLevelAtUtc = DateTime.MinValue;
-        private long lastGapFaultFrame;
-        private bool stopped;
-
-        internal StreamCaptureWorker(
-            string workingDirectory,
-            StreamRole role,
-            CaptureManifest manifest,
-            Stopwatch clock,
-            Action<LevelSample> publishLevels,
-            Action<StreamRole, CaptureFaultKind, bool, int> publishFault)
-        {
-            this.role = role;
-            this.manifest = manifest;
-            this.clock = clock;
-            this.publishLevels = publishLevels;
-            this.publishFault = publishFault;
-            directory = Path.Combine(Path.GetFullPath(workingDirectory), role == StreamRole.Meeting ? "capture/meeting" : "capture/mic");
-            writer = new PcmChunkWriter(workingDirectory, role, chunk => manifest.CloseChunk(role, chunk));
-            writerTask = Task.Run(WriterLoopAsync);
-        }
-
-        internal void OnData(byte[] buffer, int bytesRecorded, WaveFormat format)
-        {
-            if (bytesRecorded <= 0 || stopped)
-                return;
-
-            var converted = PcmFrameConverter.ToMono16Pcm48k(buffer.AsSpan(0, bytesRecorded), format);
-            if (converted.Length == 0)
-                return;
-
-            EnsureRegistered();
-            EmitLevels(converted);
-
-            if (!queue.TryAdd(converted))
-            {
-                _ = queue.TryTake(out _);
-                if (!queue.TryAdd(converted))
-                    publishFault(role, CaptureFaultKind.WriteFailed, false, unchecked((int)0x80070070));
-            }
-        }
-
-        internal async Task<StreamFiles?> StopAsync(CancellationToken cancellationToken)
-        {
-            stopped = true;
-            queue.CompleteAdding();
-            await writerTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-            writer.Complete();
-
-            var files = writer.Chunks.Select(chunk => chunk.File).ToArray();
-            if (files.Length == 0)
-                return null;
-
-            var startOffset = Math.Max(0, Volatile.Read(ref firstFrameOffset));
-            return new StreamFiles(
-                role,
-                directory,
-                files,
-                PcmChunkWriter.SampleRate,
-                1,
-                TimeSpan.FromSeconds(writer.FramesWritten / (double)PcmChunkWriter.SampleRate),
-                TimeSpan.FromSeconds(startOffset / (double)PcmChunkWriter.SampleRate),
-                IsProcessLoopback: false);
-        }
-
-        public void Dispose()
-        {
-            queue.CompleteAdding();
-            queue.Dispose();
-            writer.Dispose();
-        }
-
-        private async Task WriterLoopAsync()
-        {
+            var factory = new WasapiInputFactory();
+            AudioCaptureSession? session = null;
             try
             {
-                while (!queue.IsCompleted || queue.Count > 0)
-                {
-                    if (!queue.TryTake(out var block, millisecondsTimeout: 20))
-                    {
-                        FillSilenceByClock();
-                        continue;
-                    }
-
-                    writer.Write(block);
-                    FillSilenceByClock();
-                    await Task.Yield();
-                }
-
-                FillSilenceByClock();
+                session = new AudioCaptureSession(request, factory, IsProcessLoopbackSupported);
+                await session.StartAsync(cancellationToken).ConfigureAwait(false);
+                return session;
             }
-            catch (Exception ex)
+            catch
             {
-                publishFault(role, CaptureFaultKind.WriteFailed, false, ex.HResult);
+                if (session is not null) await session.DisposeAsync().ConfigureAwait(false);
+                else factory.Dispose();
+                throw;
+            }
+        }, cancellationToken);
+    }
+
+    private static DataFlow Flow(AudioDeviceKind kind) => kind == AudioDeviceKind.Render ? DataFlow.Render : DataFlow.Capture;
+    private static Role DeviceRole(AudioDeviceKind kind) => kind == AudioDeviceKind.Render ? Role.Multimedia : Role.Communications;
+
+    private static MMDevice? TryDefault(MMDeviceEnumerator enumerator, AudioDeviceKind kind)
+    {
+        try { return enumerator.GetDefaultAudioEndpoint(Flow(kind), DeviceRole(kind)); }
+        catch (System.Runtime.InteropServices.COMException) when (kind == AudioDeviceKind.Capture)
+        {
+            try { return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console); }
+            catch (System.Runtime.InteropServices.COMException) { return null; }
+        }
+        catch (System.Runtime.InteropServices.COMException) { return null; }
+    }
+
+    private sealed class WasapiInputFactory : ICaptureInputFactory
+    {
+        private readonly MMDeviceEnumerator enumerator = new();
+        private readonly MMDeviceNotificationClient notifications;
+        public event Action<CaptureDeviceChange>? Changed;
+
+        internal WasapiInputFactory()
+        {
+            notifications = enumerator.CreateNotificationClient(useSynchronizationContext: false);
+            notifications.DefaultDeviceChanged += (_, args) =>
+            {
+                var kind = args.Flow == DataFlow.Render ? AudioDeviceKind.Render : AudioDeviceKind.Capture;
+                if (args.Role == DeviceRole(kind) || (kind == AudioDeviceKind.Capture && args.Role == Role.Console))
+                    Changed?.Invoke(new(args.DeviceId, kind, CaptureFaultKind.DefaultDeviceChanged, true));
+            };
+            notifications.DeviceRemoved += (_, args) => NotifyBoth(args.DeviceId, CaptureFaultKind.DeviceRemoved);
+            notifications.DeviceStateChanged += (_, args) =>
+            {
+                if (args.NewState != DeviceState.Active) NotifyBoth(args.DeviceId, CaptureFaultKind.DeviceRemoved);
+            };
+            notifications.PropertyValueChanged += (_, args) =>
+            {
+                if (args.PropertyKey.Equals(PropertyKeys.PKEY_AudioEngine_DeviceFormat) || args.PropertyKey.Equals(PropertyKeys.PKEY_AudioEngine_OEMFormat))
+                    NotifyBoth(args.DeviceId, CaptureFaultKind.FormatChanged);
+            };
+        }
+
+        private void NotifyBoth(string? id, CaptureFaultKind reason)
+        {
+            Changed?.Invoke(new(id, AudioDeviceKind.Render, reason));
+            Changed?.Invoke(new(id, AudioDeviceKind.Capture, reason));
+        }
+
+        public async Task<ICaptureInput> OpenAsync(StreamRole role, CaptureRequest request, bool allowProcessLoopback)
+        {
+            MMDevice? device = null;
+            try
+            {
+                var builder = new WasapiRecorderBuilder().WithSharedMode().WithBufferLength(50).WithMmcssThreadPriority("Audio");
+                var process = role == StreamRole.Meeting && allowProcessLoopback;
+                if (process)
+                {
+                    if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 20348))
+                        throw new PlatformNotSupportedException("Process loopback requires Windows build 20348.");
+                    builder.WithProcessLoopback(checked((uint)request.BrowserProcessId!.Value), ProcessLoopbackMode.IncludeTargetProcessTree)
+                        .WithFormat(new WaveFormat(48000, 16, 1));
+                }
+                else
+                {
+                    var kind = role == StreamRole.Meeting ? AudioDeviceKind.Render : AudioDeviceKind.Capture;
+                    var id = role == StreamRole.Meeting ? request.MeetingEndpointId : request.MicrophoneEndpointId;
+                    if (!string.IsNullOrWhiteSpace(id))
+                    {
+                        try
+                        {
+                            device = enumerator.GetDevice(id);
+                            if (device.State != DeviceState.Active) { device.Dispose(); device = null; }
+                        }
+                        catch (System.Runtime.InteropServices.COMException)
+                        {
+                            device?.Dispose();
+                            device = null;
+                        }
+                    }
+                    device ??= TryDefault(enumerator, kind) ?? throw new InvalidOperationException("No active audio endpoint is available.");
+                    builder.WithDevice(device);
+                    if (role == StreamRole.Meeting) builder.WithLoopbackCapture().WithPollingSync();
+                }
+                var recorder = await builder.BuildAsync().ConfigureAwait(false);
+                return new WasapiInput(recorder, device, process);
+            }
+            catch
+            {
+                device?.Dispose();
                 throw;
             }
         }
 
-        private void FillSilenceByClock()
+        public void Dispose()
         {
-            var offset = Volatile.Read(ref firstFrameOffset);
-            if (offset < 0)
-                return;
-
-            var elapsedFrames = (long)(clock.Elapsed.TotalSeconds * PcmChunkWriter.SampleRate);
-            var lag = StreamClockAligner.ComputeMissingFrames(offset, elapsedFrames, writer.FramesWritten);
-            if (lag <= 0)
-                return;
-
-            writer.WriteSilence(lag);
-            if (StreamClockAligner.IsGapLongerThanTwoSeconds(lag) && elapsedFrames - lastGapFaultFrame > PcmChunkWriter.SampleRate * 2)
-            {
-                lastGapFaultFrame = elapsedFrames;
-                publishFault(role, CaptureFaultKind.Other, true, 2001);
-            }
-        }
-
-        private void EnsureRegistered()
-        {
-            if (registered)
-                return;
-
-            lock (gate)
-            {
-                if (registered)
-                    return;
-                var offset = (long)(clock.Elapsed.TotalSeconds * PcmChunkWriter.SampleRate);
-                firstFrameOffset = offset;
-                manifest.RegisterStream(role, offset, processLoopback: false);
-                registered = true;
-            }
-        }
-
-        private void EmitLevels(short[] samples)
-        {
-            var now = DateTime.UtcNow;
-            if ((now - lastLevelAtUtc).TotalMilliseconds < 50)
-                return;
-            lastLevelAtUtc = now;
-
-            var peak = 0f;
-            double sum = 0;
-            for (var i = 0; i < samples.Length; i++)
-            {
-                var normalized = samples[i] / 32768f;
-                var abs = Math.Abs(normalized);
-                if (abs > peak)
-                    peak = abs;
-                sum += normalized * normalized;
-            }
-
-            var rms = samples.Length == 0 ? 0f : (float)Math.Sqrt(sum / samples.Length);
-            publishLevels(new LevelSample(role, ToDbfs(peak), ToDbfs(rms)));
-        }
-
-        private static float ToDbfs(float linear)
-        {
-            if (linear <= 0.0000001f)
-                return -120f;
-            return 20f * MathF.Log10(linear);
+            notifications.Dispose();
+            enumerator.Dispose();
         }
     }
 
+    private sealed class WasapiInput : ICaptureInput
+    {
+        private readonly WasapiRecorder recorder;
+        private readonly MMDevice? device;
+        public bool ProcessLoopback { get; }
+        public string? DeviceId => recorder.DeviceId;
+        public WaveFormat Format => recorder.WaveFormat;
+        public bool IsRunning => recorder.CaptureState == CaptureState.Capturing;
+        public event CapturePacketHandler? Packet;
+        public event Action<Exception?>? Stopped;
+
+        internal WasapiInput(WasapiRecorder recorder, MMDevice? device, bool process)
+        {
+            this.recorder = recorder;
+            this.device = device;
+            ProcessLoopback = process;
+            recorder.DataAvailable += (buffer, flags, position, qpc) => Packet?.Invoke(buffer, position, qpc,
+                (flags & AudioClientBufferFlags.TimestampError) != 0, (flags & AudioClientBufferFlags.DataDiscontinuity) != 0);
+            recorder.RecordingStopped += (_, args) => Stopped?.Invoke(args.Exception);
+        }
+
+        public void Start() => recorder.StartRecording();
+        public async ValueTask DisposeAsync()
+        {
+            try { await recorder.DisposeAsync().ConfigureAwait(false); }
+            finally { device?.Dispose(); }
+        }
+    }
 }

@@ -1,136 +1,99 @@
-using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Recorder.Core.Formats;
+using Recorder.Core.IO;
 
 namespace Recorder.Audio.Windows;
 
+// The pipeline owns state/stateHistory. It must await StopAsync before its next manifest write.
 internal sealed class CaptureManifest(string directory)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly object gate = new();
     private readonly string path = Path.Combine(Path.GetFullPath(directory), "session.json");
 
-    internal void Begin(DateTimeOffset startedAt)
+    internal void Begin(DateTimeOffset startedAt) => Update(manifest =>
+    {
+        if (!manifest.Consent.Confirmed)
+            throw new InvalidOperationException("Consent must be confirmed before capture starts.");
+        if (manifest.Streams.Any(s => s.Chunks.Count != 0))
+            throw new InvalidOperationException("A recording with original chunks cannot be overwritten.");
+        manifest.Recording.StartedAt = startedAt;
+        manifest.Recording.StoppedAt = null;
+        manifest.Recording.DurationSeconds = null;
+    });
+
+    internal void End(TimeSpan duration) => Update(manifest =>
+    {
+        manifest.Recording.DurationSeconds = Math.Round(duration.TotalSeconds, 3);
+        manifest.Recording.StoppedAt = manifest.Recording.StartedAt + duration;
+    });
+
+    internal void RegisterStream(StreamRole role, long offset, bool processLoopback) => Update(manifest =>
+    {
+        var kind = ToKind(role);
+        var stream = manifest.Streams.SingleOrDefault(s => s.Kind == kind);
+        if (stream is null)
+        {
+            stream = NewStream(role, offset, processLoopback);
+            manifest.Streams.Add(stream);
+        }
+        else
+        {
+            stream.Source = Source(role, processLoopback);
+            // Re-attachment never changes the original timeline origin.
+        }
+    });
+
+    internal void CloseChunk(StreamRole role, ClosedChunk chunk) => Update(manifest =>
+    {
+        var stream = manifest.Streams.Single(s => s.Kind == ToKind(role));
+        stream.Chunks.Add(new CaptureChunkInfo
+        {
+            File = chunk.File, Frames = checked((int)chunk.Frames), Sha256 = chunk.Sha256,
+            Recovered = chunk.Recovered ? true : null,
+        });
+        manifest.Hashes.Add(chunk.File, chunk.Sha256);
+    });
+
+    internal SessionManifest Read()
     {
         lock (gate)
         {
-            var manifest = Load();
-            if (manifest["consent"]?["confirmed"]?.GetValue<bool>() != true)
-                throw new InvalidOperationException("Consent must be confirmed before capture starts.");
+            using var input = File.OpenRead(path);
+            if (input.Length > 32 * 1024 * 1024) throw new InvalidDataException("Session manifest is too large.");
+            using var document = JsonDocument.Parse(input);
+            if (!document.RootElement.TryGetProperty("schemaVersion", out var version) ||
+                !SchemaVersionPolicy.IsSupportedMajor(version.GetString() ?? ""))
+                throw new NotSupportedException("This session uses a newer or unsupported format. Update the app to open it.");
+            return document.RootElement.Deserialize<SessionManifest>(FormatJson.Options)
+                ?? throw new InvalidDataException("session.json is invalid.");
+        }
+    }
 
-            var recording = EnsureObject(manifest, "recording");
-            recording["startedAt"] = FormatUtc(startedAt);
+    internal void Update(Action<SessionManifest> update)
+    {
+        lock (gate)
+        {
+            var manifest = Read();
+            update(manifest);
             Save(manifest);
         }
     }
 
-    internal void RegisterStream(StreamRole role, long offset, bool processLoopback)
+    internal void Save(SessionManifest manifest)
     {
-        lock (gate)
-        {
-            var manifest = Load();
-            var streams = EnsureArray(manifest, "streams");
-            var kind = ToKind(role);
-
-            JsonObject? existing = null;
-            foreach (var stream in streams)
-            {
-                if (stream is JsonObject streamObject && streamObject["kind"]?.GetValue<string>() == kind)
-                {
-                    existing = streamObject;
-                    break;
-                }
-            }
-
-            var entry = existing ?? new JsonObject();
-            entry["kind"] = kind;
-            entry["source"] = processLoopback
-                ? "wasapi-process-loopback"
-                : (role == StreamRole.Meeting ? "wasapi-loopback" : "wasapi-capture");
-            entry["deviceType"] = "unknown";
-            entry["sampleRate"] = PcmChunkWriter.SampleRate;
-            entry["channels"] = 1;
-            entry["bitsPerSample"] = 16;
-            entry["chunkFrames"] = PcmChunkWriter.ChunkFrames;
-            entry["firstFrameOffset"] = offset;
-            entry["chunks"] ??= new JsonArray();
-
-            if (existing is null)
-                streams.Add(entry);
-
-            Save(manifest);
-        }
+        lock (gate) AtomicFileWrite.WriteAllText(path, FormatJson.SerializeSession(manifest));
     }
 
-    internal void CloseChunk(StreamRole role, ClosedChunk chunk)
+    internal static StreamJsonKind ToKind(StreamRole role) => role == StreamRole.Meeting ? StreamJsonKind.Meeting : StreamJsonKind.Mic;
+
+    internal static SessionStreamInfo NewStream(StreamRole role, long offset, bool processLoopback) => new()
     {
-        lock (gate)
-        {
-            var manifest = Load();
-            var streams = EnsureArray(manifest, "streams");
-            var kind = ToKind(role);
+        Kind = ToKind(role), Source = Source(role, processLoopback), DeviceType = CaptureDeviceType.Unknown,
+        SampleRate = PcmChunkWriter.SampleRate, Channels = 1, BitsPerSample = 16,
+        ChunkFrames = PcmChunkWriter.ChunkFrames, FirstFrameOffset = checked((int)offset),
+    };
 
-            JsonObject? streamEntry = null;
-            foreach (var stream in streams)
-            {
-                if (stream is JsonObject streamObject && streamObject["kind"]?.GetValue<string>() == kind)
-                {
-                    streamEntry = streamObject;
-                    break;
-                }
-            }
-
-            if (streamEntry is null)
-                throw new InvalidOperationException($"Stream '{kind}' is not registered.");
-
-            var chunks = EnsureArray(streamEntry, "chunks");
-            var chunkNode = new JsonObject
-            {
-                ["file"] = chunk.File,
-                ["frames"] = chunk.Frames,
-                ["sha256"] = chunk.Sha256,
-            };
-            if (chunk.Recovered)
-                chunkNode["recovered"] = true;
-            chunks.Add(chunkNode);
-
-            var hashes = EnsureObject(manifest, "hashes");
-            hashes[chunk.File] = chunk.Sha256;
-            Save(manifest);
-        }
-    }
-
-    private JsonObject Load()
-    {
-        var manifest = JsonNode.Parse(File.ReadAllText(path))?.AsObject();
-        if (manifest is null)
-            throw new InvalidDataException("session.json is missing or invalid.");
-        return manifest;
-    }
-
-    private void Save(JsonObject manifest) => File.WriteAllText(path, manifest.ToJsonString(JsonOptions));
-
-    private static string ToKind(StreamRole role) => role == StreamRole.Meeting ? "meeting" : "mic";
-
-    private static string FormatUtc(DateTimeOffset value) =>
-        value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-
-    private static JsonArray EnsureArray(JsonObject parent, string name)
-    {
-        if (parent[name] is JsonArray array)
-            return array;
-        array = [];
-        parent[name] = array;
-        return array;
-    }
-
-    private static JsonObject EnsureObject(JsonObject parent, string name)
-    {
-        if (parent[name] is JsonObject obj)
-            return obj;
-        obj = [];
-        parent[name] = obj;
-        return obj;
-    }
+    private static StreamCaptureSource Source(StreamRole role, bool processLoopback) => processLoopback
+        ? StreamCaptureSource.WasapiProcessLoopback
+        : role == StreamRole.Meeting ? StreamCaptureSource.WasapiLoopback : StreamCaptureSource.WasapiCapture;
 }
