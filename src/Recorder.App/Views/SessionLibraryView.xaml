@@ -1,0 +1,59 @@
+<UserControl x:Class="Recorder.App.Views.SessionLibraryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Text="Session library" Style="{StaticResource TitleTextStyle}"/>
+    <DataGrid Grid.Row="1"
+              Margin="0,16,0,8"
+              AutoGenerateColumns="False"
+              CanUserAddRows="False"
+              IsReadOnly="True"
+              SelectionMode="Single"
+              AutomationProperties.AutomationId="SessionLibraryGrid"
+              AutomationProperties.Name="Session list"
+              ItemsSource="{Binding Sessions}"
+              SelectedItem="{Binding SelectedSession}">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Session code" Binding="{Binding SessionCode}" Width="2*"/>
+        <DataGridTextColumn Header="Date" Binding="{Binding DateDisplay}" Width="*"/>
+        <DataGridTextColumn Header="State" Binding="{Binding State}" Width="*"/>
+        <DataGridTextColumn Header="Duration" Binding="{Binding DurationDisplay}" Width="*"/>
+      </DataGrid.Columns>
+    </DataGrid>
+    <StackPanel Grid.Row="2" Orientation="Horizontal">
+      <Button Margin="0,0,8,0"
+              AutomationProperties.AutomationId="SessionRefresh"
+              AutomationProperties.Name="Refresh session list"
+              Content="_Refresh"
+              Command="{Binding RefreshCommand}"/>
+      <Button Margin="0,0,8,0"
+              AutomationProperties.AutomationId="SessionOpen"
+              AutomationProperties.Name="Open session"
+              Content="_Open"
+              Command="{Binding OpenSelectedCommand}"/>
+      <Button Margin="0,0,8,0"
+              AutomationProperties.AutomationId="SessionReExport"
+              AutomationProperties.Name="Re-export session"
+              Content="Re-_export"
+              Command="{Binding ReExportCommand}"/>
+      <Button Margin="0,0,8,0"
+              AutomationProperties.AutomationId="SessionShowFolder"
+              AutomationProperties.Name="Show session folder"
+              Content="Show _folder"
+              Command="{Binding ShowFolderCommand}"/>
+      <Button AutomationProperties.AutomationId="SessionDelete"
+              AutomationProperties.Name="Delete session"
+              Content="_Delete"
+              Command="{Binding DeleteCommand}"/>
+    </StackPanel>
+    <TextBlock Grid.Row="2"
+               Margin="0,40,0,0"
+               Style="{StaticResource StatusTextStyle}"
+               Text="{Binding StatusMessage}"/>
+  </Grid>
+</UserControl>
