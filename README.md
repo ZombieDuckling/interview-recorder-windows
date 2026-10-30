@@ -1,5 +1,15 @@
 # Interview Recorder for Windows
 
+## Download for Windows
+
+### [**Download InterviewRecorder-Setup-x64.exe**](https://github.com/ZombieDuckling/interview-recorder-windows/releases/latest/download/InterviewRecorder-Setup-x64.exe)
+
+Windows 10 22H2 or Windows 11, 64-bit. No administrator rights needed. All versions and checksums: [Releases](https://github.com/ZombieDuckling/interview-recorder-windows/releases).
+
+1. Run the downloaded file. Windows may say "Windows protected your PC" because the installer is not code-signed yet: select **More info**, then **Run anyway**.
+2. Read the terms, tick **I agree**, select **Install**, then **Launch**.
+3. On first start, choose where interviews are saved and test the microphone and meeting audio.
+
 The app records consented Google Meet research interviews. The researcher runs Google Meet in a normal browser. The app is a separate native Windows program. It captures the meeting audio and the local microphone as 2 separate inputs. After the session it transcribes the audio offline with whisper.cpp. It exports an audio-only MP4 file and an editable Word (.docx) file. It works fully offline. It sends no data over the network. It has no telemetry.
 
 ## Status
