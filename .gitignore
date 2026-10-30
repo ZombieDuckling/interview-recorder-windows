@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+*.user
+.vs/
+.idea/
+# Never commit: model weights, recordings, session data, secrets, signing material
+models/*
+!models/manifest.json
+!models/README.md
+*.bin
+*.gguf
+*.wav
+*.mp4
+*.m4a
+*.caf
+*.pcm
+sessions/
+*.pfx
+*.p12
+*.snk
+*.key
+*.pem
+secrets*
+.env*
+# Third-party binaries fetched by CI (checksummed in build/)
+third_party/ffmpeg/
