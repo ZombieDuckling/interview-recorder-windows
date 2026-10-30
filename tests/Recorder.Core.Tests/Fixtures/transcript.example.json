@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "sessionId": "7f3a9c1e-2b4d-4e6f-8a1b-3c5d7e9f0a2b",
+  "sessionCode": "IR-20261031-091500-7F3A",
+  "language": "en",
+  "engine": { "name": "whisper.cpp", "version": "1.8.2", "model": "ggml-base-q5_1", "modelSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+  "createdAt": "2026-10-31T08:21:03.000Z",
+  "updatedAt": "2026-10-31T08:40:12.250Z",
+  "disclaimer": "This transcript was produced by automated speech recognition and may contain errors. Check it against the audio recording before you rely on it.",
+  "segments": [
+    { "id": 1, "start": 0.48, "end": 4.2, "speaker": "Researcher", "speakerVerified": true, "source": "mic", "text": "Thank you for joining. Can you hear me clearly?", "originalText": "Thank you for joining, can you hear me clearly", "edited": true, "confidence": 0.91 },
+    { "id": 2, "start": 4.9, "end": 6.1, "speaker": "Participant", "speakerVerified": false, "source": "meeting", "text": "Yes, I can.", "originalText": "Yes, I can.", "edited": false, "confidence": null }
+  ],
+  "history": [ { "segmentId": 1, "field": "text", "at": "2026-10-31T08:40:12.250Z", "oldLength": 46, "newLength": 47 } ],
+  "review": null
+}
