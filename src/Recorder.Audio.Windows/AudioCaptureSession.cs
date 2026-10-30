@@ -151,6 +151,7 @@ internal sealed class AudioCaptureSession : ICaptureSession
         var frames = data.Length / format.BlockAlign;
         if (frames == 0) return;
         var now = clock.Frame;
+        Volatile.Write(ref input.LastPacketFrame, now);
         var firstFrame = !timestampError && qpc > 0 ? clock.FromQpc(qpc) : now - frames * 48000L / format.SampleRate;
         if (firstFrame > now + 4800 || firstFrame < now - 480000)
             firstFrame = now - frames * 48000L / format.SampleRate;
@@ -207,6 +208,20 @@ internal sealed class AudioCaptureSession : ICaptureSession
             {
                 foreach (var lane in lanes)
                 {
+                    // Stall watchdog (mic only: a mic in event mode delivers packets even in silence; loopback legitimately
+                    // delivers nothing while nothing plays). A Bluetooth A2DP->HFP switch, USB hiccup or resume from sleep can
+                    // leave WASAPI "capturing" with no packets and no notification: re-attach after 2 s, at most every 5 s.
+                    if (lane.Role == StreamRole.Microphone && lane.Input is { } attached && Volatile.Read(ref lane.Change) == 0)
+                    {
+                        long nowFrame = clock.Frame;
+                        long lastActivity = Math.Max(Volatile.Read(ref attached.LastPacketFrame), attached.AttachedAtFrame);
+                        if (nowFrame - lastActivity > 96000 && nowFrame - lane.LastStallRestart > 240000)
+                        {
+                            lane.LastStallRestart = nowFrame;
+                            Interlocked.Exchange(ref lane.Change, (int)CaptureFaultKind.DeviceRemoved + 1);
+                        }
+                    }
+
                     var change = Interlocked.Exchange(ref lane.Change, 0);
                     if (change == 0 && (lane.Input is not null || clock.Frame < lane.RetryAfter)) continue;
                     if (change != 0) lane.LastReason = (CaptureFaultKind)(change - 1);
@@ -215,6 +230,7 @@ internal sealed class AudioCaptureSession : ICaptureSession
                         await DetachAsync(lane).ConfigureAwait(false);
                         lifetime.Token.ThrowIfCancellationRequested();
                         lane.Input = await OpenAsync(lane, lifetime.Token).ConfigureAwait(false);
+                        lane.Input.AttachedAtFrame = clock.Frame;
                         CaptureDiagnostics.Write(request.WorkingDirectory, ProcessingLogCode.CaptureDeviceChanged,
                             new ProcessingLogValue("stream", (long)lane.Role));
                         RaiseFault(new(lane.Role, lane.LastReason, true, lane.DiagnosticCode));
@@ -354,6 +370,7 @@ internal sealed class AudioCaptureSession : ICaptureSession
         internal long RetryAfter;
         internal bool ReportedUnavailable;
         internal CaptureFaultKind LastReason = CaptureFaultKind.DeviceRemoved;
+        internal long LastStallRestart = long.MinValue / 2;
     }
 
     private sealed class Attachment(ICaptureInput input)
@@ -362,6 +379,8 @@ internal sealed class AudioCaptureSession : ICaptureSession
         internal PcmFrameConverter? Converter;
         internal long ExpectedDeviceFrame = -1;
         internal long OutputEnd;
+        internal long LastPacketFrame;
+        internal long AttachedAtFrame;
         internal int Detaching;
         internal Exception? StartError;
     }
