@@ -99,3 +99,55 @@ jobs:
             out/msi/InterviewRecorder-x64.msi
             out/SHA256SUMS.txt
           retention-days: 14
+      - name: Install (per-user, silent) — SDLC-17
+        shell: pwsh
+        run: |
+          $p = Start-Process out/bundle/InterviewRecorder-Setup-x64.exe -ArgumentList '/quiet','/norestart','/log','out/install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content out/install.log -Tail 40; throw "install exit $($p.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Interview Recorder\InterviewRecorder.exe'
+          if (-not (Test-Path $exe)) { throw "not installed at $exe (per-user location)" }
+          $lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter 'Interview Recorder*.lnk'
+          if (-not $lnk) { throw 'Start Menu shortcut missing' }
+          "IR_APP_EXE=$exe" >> $env:GITHUB_ENV
+          "installed: $exe; shortcut: $($lnk.FullName)"
+      - name: E2E smoke on the installed app (FlaUI)
+        env:
+          IR_SCREENSHOTS: ${{ github.workspace }}\out\screens
+        run: dotnet test tests/Recorder.E2E/Recorder.E2E.csproj -c Release --filter "Category=E2E" --logger "trx" --results-directory out/e2e
+      - name: Real speech through the installed ffmpeg + model (Windows runtimes)
+        shell: pwsh
+        run: |
+          $app = Split-Path $env:IR_APP_EXE
+          $s = 'out\IR-20261030-120000-ABCD'; New-Item -ItemType Directory -Force "$s\capture\mic","$s\capture\meeting" | Out-Null
+          Add-Type -AssemblyName System.Speech
+          $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $tts.SetOutputToWaveFile("$PWD\out\mic.wav");     $tts.Speak('Thank you for joining this research interview. Can you tell me about your work at the clinic?'); $tts.SetOutputToNull()
+          $tts.SetOutputToWaveFile("$PWD\out\meeting.wav"); $tts.Speak('I am a nurse in a primary care clinic in Durban, and most days start with a long morning queue.'); $tts.SetOutputToNull()
+          & "$app\ffmpeg.exe" -v error -i out\mic.wav -af "apad=pad_dur=8" -ar 48000 -ac 1 -c:a pcm_s16le -f segment -segment_time 10 -segment_start_number 1 "$s\capture\mic\%06d.wav"
+          & "$app\ffmpeg.exe" -v error -i out\meeting.wav -af "adelay=8000,apad=pad_dur=1" -ar 48000 -ac 1 -c:a pcm_s16le -f segment -segment_time 10 -segment_start_number 1 "$s\capture\meeting\%06d.wav"
+          dotnet run --project tools/PipelineProbe -c Release -- $s "$app\models\ggml-base-q5_1.bin" "$app\ffmpeg.exe" 2
+          if (-not (Test-Path "$s\interview_audio.mp4") -or -not (Test-Path "$s\interview_transcript.docx")) { throw 'pipeline outputs missing' }
+          & "$app\ffmpeg.exe" -hide_banner -i "$s\interview_audio.mp4" 2>&1 | Select-String 'Audio:|Video:'
+      - name: Uninstall and check clean removal — SDLC-17
+        if: always() && env.IR_APP_EXE != ''
+        shell: pwsh
+        run: |
+          $p = Start-Process out/bundle/InterviewRecorder-Setup-x64.exe -ArgumentList '/uninstall','/quiet','/norestart' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall exit $($p.ExitCode)" }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Interview Recorder'
+          if (Test-Path $dir) { Get-ChildItem $dir -Recurse | Select-Object -First 20 FullName; throw 'program files left behind' }
+          if (Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter 'Interview Recorder*.lnk') { throw 'shortcut left behind' }
+          'uninstall clean'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-evidence
+          path: |
+            out/screens/*.png
+            out/screens/*.txt
+            out/e2e/*.trx
+            out/install.log
+            out/IR-20261030-120000-ABCD/transcript.json
+            out/IR-20261030-120000-ABCD/interview_transcript.docx
+            out/IR-20261030-120000-ABCD/interview_audio.mp4
+          retention-days: 14
