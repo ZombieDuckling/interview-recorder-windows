@@ -1,0 +1,29 @@
+<UserControl x:Class="Recorder.App.Views.ProcessingProgressView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel Margin="24" MaxWidth="640">
+    <TextBlock Text="{Binding Title}" Style="{StaticResource TitleTextStyle}"/>
+    <ProgressBar Margin="0,24,0,8"
+                 Height="24"
+                 Minimum="0"
+                 Maximum="100"
+                 AutomationProperties.AutomationId="ProcessingProgressBar"
+                 AutomationProperties.Name="Processing progress"
+                 Value="{Binding Progress}"/>
+    <TextBlock Style="{StaticResource StatusTextStyle}" Text="{Binding StatusMessage}"/>
+    <TextBlock Margin="0,8,0,0" Foreground="{DynamicResource DangerBrush}" Text="{Binding ErrorDetail}"/>
+    <StackPanel Margin="0,16,0,0" Orientation="Horizontal">
+      <Button Margin="0,0,8,0"
+              AutomationProperties.AutomationId="ProcessingCancel"
+              AutomationProperties.Name="Cancel processing"
+              Content="_Cancel"
+              Command="{Binding CancelCommand}"
+              IsEnabled="{Binding CanCancel}"/>
+      <Button AutomationProperties.AutomationId="ProcessingRetry"
+              AutomationProperties.Name="Retry processing"
+              Content="_Retry"
+              Command="{Binding RetryCommand}"
+              IsEnabled="{Binding CanRetry}"/>
+    </StackPanel>
+  </StackPanel>
+</UserControl>
