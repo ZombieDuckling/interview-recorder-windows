@@ -6,4 +6,7 @@
     <ProjectReference Include="..\Recorder.Core\Recorder.Core.csproj" />
     <PackageReference Include="DocumentFormat.OpenXml" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Recorder.Export.Tests" />
+  </ItemGroup>
 </Project>
