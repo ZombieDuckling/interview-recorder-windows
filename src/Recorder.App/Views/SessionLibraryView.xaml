@@ -21,7 +21,7 @@
       <DataGrid.Columns>
         <DataGridTextColumn Header="Session code" Binding="{Binding SessionCode}" Width="2*"/>
         <DataGridTextColumn Header="Date" Binding="{Binding DateDisplay}" Width="*"/>
-        <DataGridTextColumn Header="State" Binding="{Binding State}" Width="*"/>
+        <DataGridTextColumn Header="State" Binding="{Binding StateDisplay}" Width="*"/>
         <DataGridTextColumn Header="Duration" Binding="{Binding DurationDisplay}" Width="*"/>
       </DataGrid.Columns>
     </DataGrid>

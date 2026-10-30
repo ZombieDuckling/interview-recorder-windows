@@ -56,7 +56,7 @@ public sealed class DocxExporterTests
             segments.Add(new DocxSegment(
                 TimeSpan.FromSeconds(i * 2.16),
                 i % 2 == 0 ? "Researcher" : "Participant",
-                speakerVerified: i % 3 == 0,
+                SpeakerVerified: i % 3 == 0,
                 $"Segment {i}."));
         }
 
@@ -142,7 +142,7 @@ public sealed class DocxExporterTests
     [Fact]
     public void TranscriptEditor_records_history_without_text()
     {
-        var doc = new TranscriptDocumentDocument
+        var doc = new Recorder.Core.Formats.Transcript
         {
             SessionId = Guid.Parse("7f3a9c1e-2b4d-4e6f-8a1b-3c5d7e9f0a2b"),
             SessionCode = "IR-20261031-091500-7F3A",

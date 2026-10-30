@@ -16,19 +16,30 @@ public partial class SessionRowViewModel : ObservableObject
         State = item.State;
         RecordedAt = item.RecordedAt;
         Duration = item.Duration;
+        Damaged = item.Damaged;
+        NeedsRecovery = item.NeedsRecovery;
+        ListMessage = item.ListMessage;
     }
+
+    public bool Damaged { get; }
+
+    public bool NeedsRecovery { get; }
+
+    public string? ListMessage { get; }
 
     public string SessionCode { get; }
 
     public string Directory { get; }
 
-    public SessionState State { get; }
+    public SessionState? State { get; }
 
-    public DateTimeOffset RecordedAt { get; }
+    public DateTimeOffset? RecordedAt { get; }
 
     public TimeSpan? Duration { get; }
 
-    public string DateDisplay => RecordedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+    public string DateDisplay => RecordedAt is null ? "—" : RecordedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    public string StateDisplay => Damaged ? "Damaged" : NeedsRecovery ? "Needs recovery" : State?.ToString() ?? "Unknown";
 
     public string DurationDisplay => Duration is null ? "—" : Duration.Value.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
 }
@@ -52,6 +63,17 @@ public partial class SessionLibraryViewModel : ObservableObject
     private string _statusMessage = string.Empty;
 
     public event EventHandler<SessionRowViewModel>? OpenRequested;
+
+    public event EventHandler<SessionRowViewModel>? RecoverRequested;
+
+    [RelayCommand]
+    private void Recover()
+    {
+        if (SelectedSession is { NeedsRecovery: true } row)
+        {
+            RecoverRequested?.Invoke(this, row);
+        }
+    }
 
     [RelayCommand]
     private void Refresh()

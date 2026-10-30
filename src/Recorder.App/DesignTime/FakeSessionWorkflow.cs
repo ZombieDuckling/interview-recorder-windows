@@ -1,3 +1,4 @@
+#if DEBUG
 using Recorder.App.Services;
 using Recorder.Core.Abstractions;
 using Recorder.Core.Formats;
@@ -72,7 +73,7 @@ public sealed class FakeSessionWorkflow : ISessionWorkflow, IDisposable
         return Task.CompletedTask;
     }
 
-    public Task TranscribeAsync(CancellationToken cancellationToken)
+    public Task TranscribeAsync(string sessionDirectory, CancellationToken cancellationToken)
     {
         _status = new WorkflowStatus("Transcribing offline…", 0.5, true, true, false, null);
         Changed?.Invoke(this, EventArgs.Empty);
@@ -83,14 +84,14 @@ public sealed class FakeSessionWorkflow : ISessionWorkflow, IDisposable
 
     public Task RecoverAsync(string sessionDirectory, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task CancelCurrentOperationAsync(CancellationToken cancellationToken)
+    public Task CancelCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken)
     {
         _status = new WorkflowStatus("Cancelled.", 0, false, false, true, null);
         Changed?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 
-    public Task RetryCurrentOperationAsync(CancellationToken cancellationToken)
+    public Task RetryCurrentOperationAsync(string sessionDirectory, CancellationToken cancellationToken)
     {
         _status = new WorkflowStatus("Retrying…", 0.1, true, true, false, null);
         Changed?.Invoke(this, EventArgs.Empty);
@@ -103,3 +104,4 @@ public sealed class FakeSessionWorkflow : ISessionWorkflow, IDisposable
         GC.SuppressFinalize(this);
     }
 }
+#endif

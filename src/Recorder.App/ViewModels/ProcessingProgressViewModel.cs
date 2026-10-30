@@ -36,14 +36,14 @@ public partial class ProcessingProgressViewModel : ObservableObject
     [RelayCommand]
     private async Task CancelAsync()
     {
-        await _services.Workflow.CancelCurrentOperationAsync(CancellationToken.None);
+        await _services.Workflow.CancelCurrentOperationAsync(_services.Workflow.ActiveSession?.SessionDirectory ?? string.Empty, CancellationToken.None);
         Refresh();
     }
 
     [RelayCommand]
     private async Task RetryAsync()
     {
-        await _services.Workflow.RetryCurrentOperationAsync(CancellationToken.None);
+        await _services.Workflow.RetryCurrentOperationAsync(_services.Workflow.ActiveSession?.SessionDirectory ?? string.Empty, CancellationToken.None);
         Refresh();
     }
 

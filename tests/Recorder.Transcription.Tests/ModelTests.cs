@@ -19,7 +19,7 @@ public sealed class ModelTests
     public async Task MissingModelIsReportedInPlainLanguage()
     {
         var error = await Assert.ThrowsAsync<ModelUnavailableException>(() => new WhisperTranscriber().TranscribeAsync(
-            new TranscriptionRequest([], Path.Combine(Path.GetTempPath(), "nope.bin"), TranscriptionPreset.Fast, 2), null, CancellationToken.None));
+            new TranscriptionRequest(Guid.NewGuid(), "IR-20261031-091500-7F3A", [], Path.Combine(Path.GetTempPath(), "nope.bin"), TranscriptionPreset.Fast, 2), null, CancellationToken.None));
         Assert.Contains("missing", error.Message, StringComparison.Ordinal);
     }
 
@@ -50,12 +50,12 @@ public sealed class ModelTests
         if (model is null || wav is null) return; // model not provisioned: nothing to test (CI excludes this category)
         var progress = new List<double>();
         Transcript transcript = await new WhisperTranscriber().TranscribeAsync(
-            new TranscriptionRequest([new(StreamRole.Meeting, wav, TimeSpan.FromSeconds(10))], model, TranscriptionPreset.Fast, 4, "en"),
+            new TranscriptionRequest(Guid.NewGuid(), "IR-20261031-091500-7F3A", [new(StreamRole.Meeting, wav, TimeSpan.FromSeconds(10))], model, TranscriptionPreset.Fast, 4, "en"),
             new Progress<TranscriptionProgress>(p => progress.Add(p.Fraction)), CancellationToken.None);
-        Assert.Equal("ggml-base-q5_1", transcript.ModelName);
-        Assert.Equal(64, transcript.ModelSha256.Length);
+        Assert.Equal("ggml-base-q5_1", transcript.Engine.Model);
+        Assert.Equal(64, transcript.Engine.ModelSha256.Length);
         Assert.NotEmpty(transcript.Segments);
-        Assert.All(transcript.Segments, s => { Assert.Equal(SpeakerLabel.Participant, s.Speaker); Assert.True(s.Start >= TimeSpan.FromSeconds(10)); });
+        Assert.All(transcript.Segments, s => { Assert.Equal("Participant", s.Speaker); Assert.True(s.Start >= 10.0); });
         string text = string.Join(' ', transcript.Segments.Select(s => s.Text)).ToLowerInvariant();
         Assert.Contains("interview", text, StringComparison.Ordinal);
     }
