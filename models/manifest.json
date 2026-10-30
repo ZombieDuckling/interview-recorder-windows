@@ -1,1 +1,12 @@
-{ "models": [] }
+{
+  "models": [
+    {
+      "name": "ggml-base-q5_1",
+      "file": "ggml-base-q5_1.bin",
+      "size": 59707625,
+      "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+      "sourceUrl": "https://huggingface.co/ggerganov/whisper.cpp/resolve/362722b3fdcd2300b58a8286933ead1c48619667/ggml-base-q5_1.bin",
+      "licence": "MIT"
+    }
+  ]
+}
