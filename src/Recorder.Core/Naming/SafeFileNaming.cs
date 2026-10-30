@@ -1,9 +1,12 @@
 using System.Globalization;
+using System.Text;
 
 namespace Recorder.Core.Naming;
 
 public static class SafeFileNaming
 {
+    private const int MaxSanitizeInputLength = 4096;
+
     private static readonly HashSet<string> WindowsReservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "CON", "PRN", "AUX", "NUL",
@@ -16,8 +19,17 @@ public static class SafeFileNaming
     public static string SanitizeFileName(string input, int maxLength = MaxNameLength)
     {
         ArgumentException.ThrowIfNullOrEmpty(input);
-        Span<char> buffer = stackalloc char[input.Length];
-        var length = 0;
+        if (maxLength <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxLength));
+        }
+
+        if (input.Length > MaxSanitizeInputLength)
+        {
+            input = input[..MaxSanitizeInputLength];
+        }
+
+        var builder = new StringBuilder(input.Length);
         var previousDash = false;
         foreach (var ch in input)
         {
@@ -40,13 +52,10 @@ public static class SafeFileNaming
                 previousDash = false;
             }
 
-            if (length < buffer.Length)
-            {
-                buffer[length++] = normalized;
-            }
+            builder.Append(normalized);
         }
 
-        var candidate = new string(buffer[..length]).Trim('-', '.');
+        var candidate = builder.ToString().Trim('-', '.');
         if (candidate.Length == 0)
         {
             candidate = "unnamed";
@@ -57,9 +66,13 @@ public static class SafeFileNaming
             candidate = candidate[..maxLength].TrimEnd('-', '.');
         }
 
-        if (WindowsReservedNames.Contains(candidate) || WindowsReservedNames.Contains(Path.GetFileNameWithoutExtension(candidate)))
+        if (IsWindowsReservedName(candidate))
         {
             candidate = $"_{candidate}";
+            if (candidate.Length > maxLength)
+            {
+                candidate = candidate[..maxLength].TrimEnd('-', '.');
+            }
         }
 
         return candidate;
@@ -75,7 +88,7 @@ public static class SafeFileNaming
     public static string BuildSessionCodeWithCollision(DateTimeOffset recordingStartLocal, Guid sessionId, Func<string, bool> folderExists)
     {
         var stamp = recordingStartLocal.LocalDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        for (var offset = 0; offset < 16; offset++)
+        for (var offset = 0; offset < 8; offset++)
         {
             var suffix = SessionCodeSuffix(sessionId, offset);
             var code = $"IR-{stamp}-{suffix}";
@@ -90,14 +103,19 @@ public static class SafeFileNaming
 
     private static string SessionCodeSuffix(Guid sessionId, int hexOffset)
     {
-        var bytes = sessionId.ToByteArray();
-        var hex = Convert.ToHexString(bytes).AsSpan();
+        var hex = sessionId.ToString("N").ToUpperInvariant();
         var start = hexOffset * 4;
         if (start + 4 > hex.Length)
         {
             start = 0;
         }
 
-        return hex.Slice(start, 4).ToString();
+        return hex.Substring(start, 4);
+    }
+
+    private static bool IsWindowsReservedName(string candidate)
+    {
+        var stem = candidate.Split('.')[0];
+        return WindowsReservedNames.Contains(stem);
     }
 }

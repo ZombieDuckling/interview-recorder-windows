@@ -208,6 +208,7 @@ public sealed class SessionRecordingInfo
     public double? DurationSeconds { get; set; }
 
     [JsonPropertyOrder(3)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Recovered { get; set; }
 
     [JsonExtensionData]
@@ -324,12 +325,15 @@ public sealed class SessionOutputFile
 public sealed class SessionOutputs
 {
     [JsonPropertyOrder(0)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SessionOutputFile? Audio { get; set; }
 
     [JsonPropertyOrder(1)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SessionOutputFile? TranscriptJson { get; set; }
 
     [JsonPropertyOrder(2)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SessionOutputFile? Docx { get; set; }
 
     [JsonExtensionData]
@@ -421,6 +425,7 @@ public sealed class SessionManifest
     public SessionTranscriptionInfo? Transcription { get; set; }
 
     [JsonPropertyOrder(14)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SessionOutputs? Outputs { get; set; }
 
     [JsonPropertyOrder(15)]

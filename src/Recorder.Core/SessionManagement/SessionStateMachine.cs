@@ -26,17 +26,28 @@ public static class SessionStateRules
 {
     public static void EnsureConsentBeforeRecording(SessionManifest manifest)
     {
-        if (!manifest.Consent.Confirmed)
+        if (!manifest.Consent.Confirmed || manifest.Consent.ConfirmedAt == default)
         {
             throw new SessionTransitionRefusedException(manifest.State, SessionState.Recording, "CONSENT_REQUIRED");
         }
     }
 
-    public static bool IsAllowed(SessionState from, SessionState to) =>
-        Allowed.TryGetValue(from, out var targets) && targets.Contains(to);
+    public static bool IsTransitionAllowed(SessionState? from, SessionState to)
+    {
+        if (from is null)
+        {
+            return to == SessionState.Recording;
+        }
+
+        return Allowed.TryGetValue(from.Value, out var targets) && targets.Contains(to);
+    }
+
+    public static bool IsAllowed(SessionState from, SessionState to) => IsTransitionAllowed(from, to);
+
+    internal static IReadOnlyDictionary<SessionState, HashSet<SessionState>> TransitionTable => Allowed;
 
     private static readonly Dictionary<SessionState, HashSet<SessionState>> Allowed =
-        new Dictionary<SessionState, HashSet<SessionState>>
+        new()
         {
             [SessionState.Recording] =
             [
@@ -66,7 +77,6 @@ public static class SessionStateRules
             [
                 SessionState.Exported,
                 SessionState.Transcribing,
-                SessionState.Failed,
             ],
             [SessionState.Recovered] =
             [
@@ -95,8 +105,21 @@ public sealed class SessionStateMachine
 
     public SessionManifest Manifest { get; }
 
-    public async Task TransitionToAsync(SessionState next, DateTimeOffset atUtc, CancellationToken cancellationToken = default)
+    public Task TransitionToAsync(SessionState next, DateTimeOffset atUtc, CancellationToken cancellationToken = default) =>
+        TransitionToAsync(next, atUtc, failure: null, cancellationToken);
+
+    public async Task TransitionToAsync(
+        SessionState next,
+        DateTimeOffset atUtc,
+        SessionErrorInfo? failure,
+        CancellationToken cancellationToken = default)
     {
+        if (next == SessionState.Failed && failure is null)
+        {
+            var from = Manifest.StateHistory.Count == 0 ? (SessionState?)null : Manifest.State;
+            throw new SessionTransitionRefusedException(from, next, "ERROR_REQUIRED");
+        }
+
         if (Manifest.StateHistory.Count == 0)
         {
             if (next != SessionState.Recording)
@@ -120,8 +143,31 @@ public sealed class SessionStateMachine
             }
         }
 
+        var previousState = Manifest.State;
+        var previousError = Manifest.Error;
+        var historyCountBefore = Manifest.StateHistory.Count;
+
         Manifest.State = next;
         Manifest.StateHistory.Add(new SessionStateHistoryEntry { State = next, At = atUtc });
-        await SessionManifestIO.WriteAsync(_sessionFilePath, Manifest, cancellationToken).ConfigureAwait(false);
+        if (next == SessionState.Failed)
+        {
+            Manifest.Error = failure;
+        }
+
+        try
+        {
+            await SessionManifestIO.WriteAsync(_sessionFilePath, Manifest, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            Manifest.State = previousState;
+            Manifest.Error = previousError;
+            if (Manifest.StateHistory.Count > historyCountBefore)
+            {
+                Manifest.StateHistory.RemoveAt(Manifest.StateHistory.Count - 1);
+            }
+
+            throw;
+        }
     }
 }

@@ -10,7 +10,8 @@ public sealed record SessionLibraryEntry(
     string FolderPath,
     SessionState? State,
     bool Damaged,
-    bool NeedsRecovery);
+    bool NeedsRecovery,
+    bool UnsupportedSchema = false);
 
 public static class SessionIntegrity
 {
@@ -89,6 +90,16 @@ public static class SessionLibrary
                     Damaged: false,
                     NeedsRecovery: RecoveryStates.Contains(manifest.State)));
             }
+            catch (UnsupportedSchemaVersionException)
+            {
+                entries.Add(new SessionLibraryEntry(
+                    Path.GetFileName(directory),
+                    directory,
+                    State: null,
+                    Damaged: false,
+                    NeedsRecovery: false,
+                    UnsupportedSchema: true));
+            }
             catch (CorruptedFileException)
             {
                 entries.Add(new SessionLibraryEntry(
@@ -110,6 +121,6 @@ public static class SessionLibrary
             return [];
         }
 
-        return List(dataRoot).Where(static e => e is { Damaged: false, NeedsRecovery: true }).ToArray();
+        return List(dataRoot).Where(static e => e is { Damaged: false, UnsupportedSchema: false, NeedsRecovery: true }).ToArray();
     }
 }

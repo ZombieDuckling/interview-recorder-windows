@@ -61,12 +61,14 @@ public static class SpeakerLabelMapping
 
     public static bool TryParse(string speaker, out SpeakerLabel label)
     {
-        if (Enum.TryParse(speaker, ignoreCase: false, out label))
+        label = speaker switch
         {
-            return true;
-        }
+            "Researcher" => SpeakerLabel.Researcher,
+            "Participant" => SpeakerLabel.Participant,
+            "Unknown" => SpeakerLabel.Unknown,
+            _ => default,
+        };
 
-        label = default;
-        return false;
+        return speaker is "Researcher" or "Participant" or "Unknown";
     }
 }

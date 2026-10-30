@@ -48,13 +48,8 @@ public static class AtomicFileWrite
             options: FileOptions.Asynchronous | FileOptions.WriteThrough);
 
         await using var writer = new StreamWriter(stream, Utf8NoBom);
-        for (var i = 0; i < contents.Length; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await writer.WriteAsync(contents[i]).ConfigureAwait(false);
-            TestBytesWrittenHook?.Invoke(i + 1);
-        }
-
+        await writer.WriteAsync(contents.AsMemory(), cancellationToken).ConfigureAwait(false);
+        TestBytesWrittenHook?.Invoke(contents.Length);
         await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Flush(flushToDisk: true);
     }

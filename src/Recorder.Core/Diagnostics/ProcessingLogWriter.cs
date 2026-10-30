@@ -85,7 +85,7 @@ public sealed class ProcessingLogWriter : IDisposable
             .Append(' ')
             .Append(level.ToString().ToUpperInvariant())
             .Append(' ')
-            .Append(ToCode(code));
+            .Append(ProcessingLogCodes.Format(code));
 
         if (values is not null)
         {
@@ -101,7 +101,12 @@ public sealed class ProcessingLogWriter : IDisposable
         }
     }
 
-    private static string ToCode(ProcessingLogCode code) =>
+    private static string ToCode(ProcessingLogCode code) => ProcessingLogCodes.Format(code);
+}
+
+internal static class ProcessingLogCodes
+{
+    internal static string Format(ProcessingLogCode code) =>
         code switch
         {
             ProcessingLogCode.AppStart => "APP_START",
@@ -137,6 +142,7 @@ public sealed class ProcessingLogWriter : IDisposable
 
 public readonly struct ProcessingLogValue
 {
+    // placeholder removed duplicate ToCode block
     public ProcessingLogValue(string name, long number)
     {
         Name = name;

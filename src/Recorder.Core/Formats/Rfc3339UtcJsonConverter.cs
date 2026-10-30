@@ -4,19 +4,47 @@ using System.Text.Json.Serialization;
 
 namespace Recorder.Core.Formats;
 
+internal static class Rfc3339UtcTimestamps
+{
+    internal const string FormatWithMilliseconds = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
+
+    internal static DateTimeOffset ParseRequired(string text)
+    {
+        if (DateTimeOffset.TryParseExact(
+                text,
+                FormatWithMilliseconds,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new JsonException($"Expected RFC 3339 UTC timestamp in form {FormatWithMilliseconds}.");
+    }
+}
+
 internal sealed class Rfc3339UtcJsonConverter : JsonConverter<DateTimeOffset>
 {
-    private const string Format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
-
     public override DateTimeOffset Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        var text = reader.GetString() ?? throw new JsonException("Expected RFC 3339 timestamp string.");
-        return DateTimeOffset.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException("Expected RFC 3339 timestamp string.");
+        }
+
+        var text = reader.GetString();
+        if (text is null)
+        {
+            throw new JsonException("Expected RFC 3339 timestamp string.");
+        }
+
+        return Rfc3339UtcTimestamps.ParseRequired(text);
     }
 
     public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options)
     {
-        writer.WriteStringValue(value.ToUniversalTime().ToString(Format, CultureInfo.InvariantCulture));
+        writer.WriteStringValue(value.ToUniversalTime().ToString(Rfc3339UtcTimestamps.FormatWithMilliseconds, CultureInfo.InvariantCulture));
     }
 }
 
