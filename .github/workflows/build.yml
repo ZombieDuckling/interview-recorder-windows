@@ -47,6 +47,9 @@ jobs:
     needs: test
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -77,9 +80,6 @@ jobs:
         run: dotnet build packaging/windows/Bundle/InterviewRecorder.Bundle.wixproj -c Release -p:ProductVersion=${{ steps.ver.outputs.version }} -p:MsiPath=${{ github.workspace }}\out\msi\InterviewRecorder-x64.msi -o out/bundle
       - name: Sign (only when a certificate is configured)
         if: env.SIGN_PFX_BASE64 != ''
-        env:
-          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
-          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
         shell: pwsh
         run: ./build/sign.ps1 -Files out/bundle/InterviewRecorder-Setup-x64.exe
       - name: Hashes
