@@ -1,0 +1,60 @@
+<UserControl x:Class="Recorder.App.Views.WelcomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Recorder.App.Controls">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24" MaxWidth="720">
+      <TextBlock Text="Welcome" Style="{StaticResource TitleTextStyle}"/>
+      <TextBlock Margin="0,8,0,16"
+                 Text="Set where interview files are stored, read the consent reminder, and test microphone and meeting audio before your first session."/>
+      <TextBlock Text="Consent reminder" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,4,0,16"
+                 Text="Only record when the participant has given informed consent for this study. Interview Recorder stays offline; you control where files are stored."/>
+      <TextBlock Text="Storage location" FontWeight="SemiBold"/>
+      <Grid Margin="0,4,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBox Grid.Column="0"
+                 AutomationProperties.AutomationId="WelcomeDataRoot"
+                 AutomationProperties.Name="Storage location"
+                 Text="{Binding DataRoot, UpdateSourceTrigger=PropertyChanged}"/>
+        <Button Grid.Column="1"
+                Margin="8,0,0,0"
+                AutomationProperties.AutomationId="WelcomeBrowseDataRoot"
+                AutomationProperties.Name="Browse storage location"
+                Content="_Browse…"
+                Command="{Binding BrowseDataRootCommand}"/>
+      </Grid>
+      <TextBlock Margin="0,8,0,0"
+                 Foreground="{DynamicResource DangerBrush}"
+                 Style="{StaticResource StatusTextStyle}"
+                 Text="{Binding SyncFolderWarning}"
+                 Visibility="{Binding SyncFolderWarning, Converter={StaticResource StringNotEmptyVisibility}}"/>
+      <Button Margin="0,12,0,0"
+              HorizontalAlignment="Left"
+              Style="{StaticResource PrimaryButtonStyle}"
+              AutomationProperties.AutomationId="WelcomeSaveStorage"
+              AutomationProperties.Name="Save storage location"
+              Content="Save _location"
+              Command="{Binding SaveDataRootCommand}"/>
+      <TextBlock Margin="0,24,0,8" Text="Audio test" FontWeight="SemiBold"/>
+      <controls:LevelMeterControl DataContext="{Binding MicMeter}" Margin="0,0,0,8"/>
+      <controls:LevelMeterControl DataContext="{Binding MeetingMeter}" Margin="0,0,0,12"/>
+      <StackPanel Orientation="Horizontal">
+        <Button AutomationProperties.AutomationId="WelcomeAudioTestStart"
+                AutomationProperties.Name="Start audio test"
+                Content="Start audio _test"
+                Command="{Binding StartAudioTestCommand}"
+                Visibility="{Binding IsTesting, Converter={StaticResource BoolVisibility}, ConverterParameter=invert}"/>
+        <Button AutomationProperties.AutomationId="WelcomeAudioTestStop"
+                AutomationProperties.Name="Stop audio test"
+                Content="Stop audio test"
+                Command="{Binding StopAudioTestCommand}"
+                Visibility="{Binding IsTesting, Converter={StaticResource BoolVisibility}}"/>
+      </StackPanel>
+      <TextBlock Margin="0,16,0,0" Style="{StaticResource StatusTextStyle}" Text="{Binding StatusMessage}"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
