@@ -26,8 +26,9 @@ public sealed class InstalledAppSmokeTests
         using Application app = Application.Launch(AppExe);
         try
         {
-            Window window = app.GetMainWindow(automation, TimeSpan.FromSeconds(30));
+            Window? window = app.GetMainWindow(automation, TimeSpan.FromSeconds(30));
             Assert.NotNull(window);
+            if (window is null) return;
             Assert.Equal("Interview Recorder", window.Title);
             Shot(window, "00-start");
 
