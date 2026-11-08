@@ -14,6 +14,9 @@ public sealed class SetupWizardScreenshotTests
     private static readonly string? SetupExe = Environment.GetEnvironmentVariable("IR_SETUP_EXE");
     private static readonly string Screens = Environment.GetEnvironmentVariable("IR_SCREENSHOTS") ?? Path.Combine(Path.GetTempPath(), "ir-screens");
 
+    // Burn relaunches the bundle as a clean-room process; allow a generous budget on a cold CI desktop.
+    private const int WindowDiscoveryTimeoutSeconds = 120;
+
     [Fact]
     public void Wizard_shows_terms_and_enables_install_only_after_agreeing()
     {
@@ -27,17 +30,15 @@ public sealed class SetupWizardScreenshotTests
         using Application app = Application.Launch(SetupExe);
         try
         {
-            Window? window = null;
-            for (int i = 0; i < 60 && window is null; i++)
-            {
-                // Burn relaunches itself as a separate (clean-room) process, so search the whole desktop, not the launched process.
-                window = automation.GetDesktop().FindAllChildren()
-                    .FirstOrDefault(w => (w.Name ?? string.Empty).Contains("Interview Recorder", StringComparison.Ordinal))?.AsWindow();
-                if (window is null) Thread.Sleep(500);
-            }
+            // Search the whole desktop: Burn relaunches itself as a separate (clean-room) process.
+            var (window, titles) = FindWizardWindow(automation, TimeSpan.FromSeconds(WindowDiscoveryTimeoutSeconds));
 
-            Assert.NotNull(window);
+            Assert.True(
+                window is not null,
+                $"Setup wizard window was not found within {WindowDiscoveryTimeoutSeconds}s. " +
+                $"Top-level desktop windows seen: [{string.Join(" | ", titles)}]");
             if (window is null) return;
+
             Thread.Sleep(1000);
             Capture.Element(window).ToFile(Path.Combine(Screens, "setup-01-welcome-terms.png"));
 
@@ -59,5 +60,77 @@ public sealed class SetupWizardScreenshotTests
                 p.Dispose();
             }
         }
+    }
+
+    // Polls the desktop for the wizard window, matching on window title or on the setup process id,
+    // and returns the titles seen so an unsuccessful run is diagnosable from the CI log alone.
+    private static (Window? window, string[] titles) FindWizardWindow(UIA3Automation automation, TimeSpan timeout)
+    {
+        var setupProcessIds = SetupProcessIds();
+        var deadline = DateTime.UtcNow + timeout;
+        string[] lastTitles = Array.Empty<string>();
+
+        while (DateTime.UtcNow < deadline)
+        {
+            AutomationElement[] candidates = automation.GetDesktop().FindAllChildren().ToArray();
+            lastTitles = candidates
+                .Select(w => w.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct()
+                .ToArray();
+
+            var match = candidates.FirstOrDefault(w => MatchesWizard(w, setupProcessIds));
+            if (match is not null)
+            {
+                return (match.AsWindow(), lastTitles);
+            }
+
+            setupProcessIds = SetupProcessIds();
+            Thread.Sleep(500);
+        }
+
+        return (null, lastTitles);
+    }
+
+    private static bool MatchesWizard(AutomationElement element, HashSet<int> setupProcessIds)
+    {
+        if (TitleLooksLikeWizard(element.Name))
+        {
+            return true;
+        }
+
+        try
+        {
+            int pid = element.Properties.ProcessId.ValueOrDefault;
+            return pid != 0 && setupProcessIds.Contains(pid);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool TitleLooksLikeWizard(string? name)
+    {
+        return !string.IsNullOrEmpty(name) && name.Contains("Recorder", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<int> SetupProcessIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var p in System.Diagnostics.Process.GetProcesses())
+        {
+            try
+            {
+                if (p.ProcessName.Contains("InterviewRecorder", StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(p.Id);
+                }
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+            finally { p.Dispose(); }
+        }
+        return ids;
     }
 }
